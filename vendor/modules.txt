@@ -80,7 +80,7 @@ filippo.io/hpke
 filippo.io/hpke/crypto
 filippo.io/hpke/crypto/ecdh
 filippo.io/hpke/internal/byteorder
-# git.tatikoma.dev/corpix/atlas v0.0.0 => ../../atlas
+# git.tatikoma.dev/corpix/atlas v0.0.0
 ## explicit; go 1.24.1
 git.tatikoma.dev/corpix/atlas/errors
 git.tatikoma.dev/corpix/atlas/log
@@ -1058,4 +1058,3 @@ gopkg.in/ini.v1
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3
-# git.tatikoma.dev/corpix/atlas => ../../atlas

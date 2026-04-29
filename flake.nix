@@ -6,6 +6,9 @@
 
     flake-parts.url = "github:hercules-ci/flake-parts";
     flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
+
+    nixos-anywhere.url = "github:nix-community/nixos-anywhere";
+    nixos-anywhere.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
@@ -19,23 +22,36 @@
       ];
 
       perSystem =
-        { pkgs, ... }:
-        {
-          packages.default = pkgs.buildGoModule {
-            pname = "deploy";
+        { pkgs, system, ... }:
+        let
+          unwrapped = pkgs.buildGoModule {
+            pname = "deploy-unwrapped";
             version = "0.1.0";
-            src = ./.;
-
-            # All external dependencies are vendored; no network fetch needed.
+            src = pkgs.lib.fileset.toSource {
+              root = ./.;
+              fileset = pkgs.lib.fileset.gitTracked ./.;
+            };
             vendorHash = null;
-
-            # The go.mod contains a local replace directive for atlas that is only
-            # valid inside the cheburnet-infra monorepo. All atlas packages are
-            # already vendored so the directive is safe to drop at build time.
-            postPatch = ''
-              sed -i '/^replace /d' go.mod
+            meta.mainProgram = "deploy";
+          };
+        in
+        {
+          packages.default = pkgs.symlinkJoin {
+            name = "deploy";
+            paths = [ unwrapped ];
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            postBuild = ''
+              wrapProgram $out/bin/deploy \
+                --prefix PATH : ${
+                  pkgs.lib.makeBinPath [
+                    pkgs.nix
+                    pkgs.openssh
+                    pkgs.cpio
+                    pkgs.ssh-to-age
+                    inputs.nixos-anywhere.packages.${system}.default
+                  ]
+                }
             '';
-
             meta = with pkgs.lib; {
               description = "NixOS machine deployment CLI";
               mainProgram = "deploy";

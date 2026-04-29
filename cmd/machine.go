@@ -55,6 +55,11 @@ func machineInitCmd() *cli.Command {
 				Usage: "nixos-anywhere phases to execute",
 				Value: "kexec,disko,install,reboot",
 			},
+			&cli.PathFlag{
+				Name:  "kexec",
+				Usage: "path to the kexec installer tarball",
+				Value: "result/nixos-kexec-installer-x86_64-linux.tar.gz",
+			},
 		},
 		Action: func(ctx *cli.Context) error {
 			if ctx.NArg() < 2 {
@@ -65,6 +70,7 @@ func machineInitCmd() *cli.Command {
 			host := ctx.Args().Get(1)
 			port := ctx.Int("port")
 			phases := ctx.String("phases")
+			kexecTarball := ctx.Path("kexec")
 
 			log.Info().Str("machine", machine).Str("host", host).Int("port", port).Msg("initialising machine")
 
@@ -112,14 +118,12 @@ func machineInitCmd() *cli.Command {
 			}
 
 			sshArgs := cfg.SSHArgs()
-			target := fmt.Sprintf("%s:%d", host, port)
-			args := []string{
-				"--",
-			}
+			args := []string{"--"}
 			args = append(args, sshArgs...)
 			args = append(args,
 				"--phases", phases,
 				"--post-kexec-ssh-port", "22",
+				"--kexec", kexecTarball,
 				"--no-substitute-on-destination",
 				"--extra-files", extra,
 				"--disk-encryption-keys", "/run/zfs-keys/rpool.key", zfsKeyFile,
@@ -128,8 +132,9 @@ func machineInitCmd() *cli.Command {
 				cfg.SSHTarget(host),
 			)
 
-			log.Info().Str("machine", machine).Str("target", target).Msg("running nixos-anywhere")
+			log.Info().Str("machine", machine).Str("host", host).Int("port", port).Msg("running nixos-anywhere")
 			cmd := exec.Command("nixos-anywhere", args...)
+			cmd.Env = append(os.Environ(), "HOME="+cfg.FlakeDir)
 			cmd.Stdin = os.Stdin
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
