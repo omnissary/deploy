@@ -115,14 +115,15 @@ func UpsertMachineRules(confPath, machine, ageKey string, updateFn func(confPath
 		log.Info().Str("machine", machine).Msg("updated .sops.yaml")
 	}
 
-	// UpdateKeys on any existing encrypted files, regardless of whether rules changed.
-	for _, path := range existingFiles(machine) {
-		if _, err := os.Stat(path); err != nil {
-			continue
-		}
-		log.Debug().Str("file", path).Msg("sops updatekeys")
-		if err := updateFn(confPath, path); err != nil {
-			return changed, errors.Wrapf(err, "updatekeys %s", path)
+	if changed {
+		for _, path := range existingFiles(machine) {
+			if _, err := os.Stat(path); err != nil {
+				continue
+			}
+			log.Debug().Str("file", path).Msg("sops updatekeys")
+			if err := updateFn(confPath, path); err != nil {
+				return changed, errors.Wrapf(err, "updatekeys %s", path)
+			}
 		}
 	}
 
