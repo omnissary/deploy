@@ -391,11 +391,12 @@ func machineDeployCmd() *cli.Command {
 				return errors.Wrapf(err, "copy closure to %s", targetHost)
 			}
 
-			// Activate.
 			log.Info().Str("machine", machine).Msg("activating configuration")
 			switchCmd := fmt.Sprintf(
-				"nix-env -p /nix/var/nix/profiles/system --set '%s' && '%s/bin/switch-to-configuration' switch",
-				toplevel, toplevel,
+				"nix-env --profile /nix/var/nix/profiles/system --set '%s' && "+
+					"/nix/var/nix/profiles/system/bin/switch-to-configuration boot && "+
+					"/nix/var/nix/profiles/system/bin/switch-to-configuration switch",
+				toplevel,
 			)
 			runArgs := append(append([]string{}, muxArgs...), sshTarget, switchCmd)
 			switchExec := exec.Command("ssh", runArgs...)
