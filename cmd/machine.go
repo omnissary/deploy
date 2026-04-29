@@ -42,7 +42,7 @@ func machineCmd() *cli.Command {
 func machineInitCmd() *cli.Command {
 	return &cli.Command{
 		Name:      "init",
-		Usage:     "bootstrap a machine via nixos-anywhere (kexec → disko → install → reboot)",
+		Usage:     "bootstrap a machine via nixos-anywhere (kexec -> disko -> install -> reboot)",
 		ArgsUsage: "<machine> <host>",
 		Flags: []cli.Flag{
 			&cli.IntFlag{
@@ -650,4 +650,3 @@ func hasMachinesDir(nixStorePath string) bool {
 	fi, err := os.Stat(filepath.Join(nixStorePath, "machines"))
 	return err == nil && fi.IsDir()
 }
-

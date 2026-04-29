@@ -91,7 +91,7 @@ func New() *cli.App {
 			},
 			&cli.PathFlag{
 				Name:    "hosts-file",
-				Usage:   "path to the machine→host JSON registry",
+				Usage:   "path to the machine->host JSON registry",
 				Value:   "hosts",
 				EnvVars: []string{"DEPLOY_HOSTS_FILE"},
 			},
@@ -140,6 +140,7 @@ func New() *cli.App {
 			return nil
 		},
 		Commands: []*cli.Command{
+			initCmd(),
 			hostCmd(),
 			keyCmd(),
 			secretCmd(),

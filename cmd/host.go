@@ -13,7 +13,7 @@ import (
 func hostCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "host",
-		Usage: "manage machine→address registry",
+		Usage: "manage machine->address registry",
 		Subcommands: []*cli.Command{
 			{
 				Name:      "get",
