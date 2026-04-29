@@ -236,13 +236,9 @@ func UpdateKeys(confPath, filePath string) error {
 		return errors.Wrapf(err, "sops load encrypted %s", filePath)
 	}
 
-	dataKey, err := common.DecryptTree(common.DecryptTreeOpts{
-		Tree:        tree,
-		KeyServices: keyServices(),
-		Cipher:      newCipher(),
-	})
+	dataKey, err := tree.Metadata.GetDataKeyWithKeyServices(keyServices(), nil)
 	if err != nil {
-		return errors.Wrapf(err, "sops decrypt tree %s", filePath)
+		return errors.Wrapf(err, "sops get data key %s", filePath)
 	}
 
 	tree.Metadata.KeyGroups = cfg.KeyGroups
