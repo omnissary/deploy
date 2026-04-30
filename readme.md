@@ -13,6 +13,8 @@ Global options:
 | Flag | Env | Default | Description |
 |------|-----|---------|-------------|
 | `--flake`, `-f` | `DEPLOY_FLAKE` | `.` | path to flake root |
+| `--images-flake` | `DEPLOY_IMAGES_FLAKE` | `git+https://git.tatikoma.dev/corpix/deploy-images` | flake ref for installer images |
+| `--system` | `DEPLOY_SYSTEM` | auto-detected from host arch | target NixOS system tuple (e.g. `x86_64-linux`) |
 | `--ssh-user` | `DEPLOY_SSH_USER` | `root` | SSH user for remote ops |
 | `--known-hosts` | `DEPLOY_KNOWN_HOSTS` | `known_hosts` | local known_hosts file |
 | `--hosts-file` | `DEPLOY_HOSTS_FILE` | `hosts` | machine→address registry |
@@ -64,17 +66,31 @@ deploy machine ssh <machine>               # open interactive SSH session
 deploy machine unlock-zfs <machine>        # send ZFS root key to initrd listener
 ```
 
-`init` flags: `--port` (default `22`), `--phases` (default `kexec,disko,install,reboot`).  
+`init` flags: `--port` (default `22`), `--phases` (default `kexec,disko,install,reboot`),
+`--kexec-flavor` (default `zfs`), `--kexec` (explicit tarball path, skips auto-build).  
 `unlock-zfs` flag: `--initrd-port` (default `2222`).
 
 ### kexec
 
-Build and test kexec installer images.
+Build and test kexec installer images from the images flake.
 
 ```
-deploy kexec [--flavor zfs|ext4]   # build kexec image
-deploy kexec debug                  # boot image in QEMU (C-a x to exit)
+deploy kexec [--flavor zfs|ext4]          # build image, print tarball path
+deploy kexec debug [--flavor zfs|ext4]    # build image and boot in QEMU (C-a x to exit)
 ```
+
+## Images flake
+
+The `--images-flake` flag points to the flake that provides installer images used during
+machine bootstrap. Expected outputs:
+
+| Output | Description |
+|--------|-------------|
+| `packages.x86_64-linux.kexec-ext4` | kexec installer tarball — ext4 variant |
+| `packages.x86_64-linux.kexec-zfs`  | kexec installer tarball — ZFS variant  |
+
+Each output is a store directory containing
+`nixos-kexec-installer-<flavor>-x86_64-linux.tar.gz`.
 
 ## Development
 

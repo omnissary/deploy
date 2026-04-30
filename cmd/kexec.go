@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bufio"
 	"compress/gzip"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -24,9 +25,6 @@ func kexecCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "kexec",
 		Usage: "build and manage kexec installer images",
-		Before: func(ctx *cli.Context) error {
-			return requireFlake(getConfig(ctx))
-		},
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:  "flavor",
@@ -37,32 +35,56 @@ func kexecCmd() *cli.Command {
 		Action: func(ctx *cli.Context) error {
 			cfg := getConfig(ctx)
 			flavor := ctx.String("flavor")
-			attr := "tiny-kexec-" + flavor
-			log.Info().Str("flavor", flavor).Str("attr", attr).Msg("building kexec image")
-			path, err := nix.Build(cfg.FlakeDir, attr)
+			log.Info().Str("flavor", flavor).Msg("building kexec image")
+			tarball, err := buildKexecTarball(cfg.ImagesFlake, cfg.System, flavor)
 			if err != nil {
 				return errors.Wrapf(err, "build kexec %s", flavor)
 			}
-			log.Info().Str("path", path).Msg("kexec image built")
+			fmt.Println(tarball)
 			return nil
 		},
 		Subcommands: []*cli.Command{
 			{
 				Name:  "debug",
-				Usage: "extract the kexec image and boot it in QEMU (C-a x to exit)",
+				Usage: "build the kexec image and boot it in QEMU (C-a x to exit)",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:  "flavor",
+						Usage: "kexec image flavor: zfs or ext4",
+						Value: "zfs",
+					},
+				},
 				Action: func(ctx *cli.Context) error {
 					cfg := getConfig(ctx)
-					return kexecDebug(cfg)
+					flavor := ctx.String("flavor")
+					return kexecDebug(cfg, flavor)
 				},
 			},
 		},
 	}
 }
 
-func kexecDebug(cfg *Config) error {
-	tarball := filepath.Join(cfg.FlakeDir, "result", "nixos-kexec-installer-x86_64-linux.tar.gz")
+// buildKexecTarball builds the kexec image for the given flavor from the images
+// flake and returns the path to the tarball inside the store.
+func buildKexecTarball(imagesFlake, system, flavor string) (string, error) {
+	attr := "packages." + system + ".kexec-" + flavor
+	log.Debug().Str("flake", imagesFlake).Str("attr", attr).Msg("building kexec tarball")
+	storePath, err := nix.Build(imagesFlake, attr)
+	if err != nil {
+		return "", errors.Wrapf(err, "nix build %s#%s", imagesFlake, attr)
+	}
+	tarball := filepath.Join(storePath, "nixos-kexec-installer-"+flavor+"-"+system+".tar.gz")
 	if _, err := os.Stat(tarball); err != nil {
-		return errors.Errorf("kexec tarball not found at %s; run 'deploy kexec' first", tarball)
+		return "", errors.Wrapf(err, "kexec tarball not found at %s", tarball)
+	}
+	log.Info().Str("tarball", tarball).Msg("kexec image ready")
+	return tarball, nil
+}
+
+func kexecDebug(cfg *Config, flavor string) error {
+	tarball, err := buildKexecTarball(cfg.ImagesFlake, cfg.System, flavor)
+	if err != nil {
+		return err
 	}
 
 	root, err := os.MkdirTemp("", "kexec-ext-*")

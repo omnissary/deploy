@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"git.tatikoma.dev/corpix/atlas/errors"
@@ -23,6 +24,22 @@ type Config struct {
 	KnownHosts string
 	// SSHUser is the remote user for SSH connections.
 	SSHUser string
+	// ImagesFlake is the flake ref for the deploy-images repository.
+	ImagesFlake string
+	// System is the target NixOS system tuple (e.g. x86_64-linux).
+	System string
+}
+
+// nixSystem returns the NixOS system tuple for the current machine's architecture.
+func nixSystem() string {
+	switch runtime.GOARCH {
+	case "amd64":
+		return "x86_64-linux"
+	case "arm64":
+		return "aarch64-linux"
+	default:
+		return runtime.GOARCH + "-linux"
+	}
 }
 
 const configKey = "deploy.config"
@@ -95,6 +112,18 @@ func New() *cli.App {
 				Value:   "hosts",
 				EnvVars: []string{"DEPLOY_HOSTS_FILE"},
 			},
+			&cli.StringFlag{
+				Name:    "images-flake",
+				Usage:   "flake ref for the deploy-images repository",
+				Value:   "git+https://git.tatikoma.dev/corpix/deploy-images",
+				EnvVars: []string{"DEPLOY_IMAGES_FLAKE"},
+			},
+			&cli.StringFlag{
+				Name:        "system",
+				Usage:       "target NixOS system tuple (e.g. x86_64-linux, aarch64-linux)",
+				Value:       nixSystem(),
+				EnvVars:     []string{"DEPLOY_SYSTEM"},
+			},
 			&cli.BoolFlag{
 				Name:    "debug",
 				Aliases: []string{"d"},
@@ -123,11 +152,13 @@ func New() *cli.App {
 			}
 
 			cfg := &Config{
-				FlakeDir:   abs,
-				SopsConf:   filepath.Join(abs, ".sops.yaml"),
-				HostsFile:  resolve(ctx.Path("hosts-file")),
-				KnownHosts: resolve(ctx.Path("known-hosts")),
-				SSHUser:    ctx.String("ssh-user"),
+				FlakeDir:    abs,
+				SopsConf:    filepath.Join(abs, ".sops.yaml"),
+				HostsFile:   resolve(ctx.Path("hosts-file")),
+				KnownHosts:  resolve(ctx.Path("known-hosts")),
+				SSHUser:     ctx.String("ssh-user"),
+				ImagesFlake: ctx.String("images-flake"),
+				System:      ctx.String("system"),
 			}
 			ctx.App.Metadata = map[string]interface{}{configKey: cfg}
 

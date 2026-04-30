@@ -55,10 +55,14 @@ func machineInitCmd() *cli.Command {
 				Usage: "nixos-anywhere phases to execute",
 				Value: "kexec,disko,install,reboot",
 			},
+			&cli.StringFlag{
+				Name:  "kexec-flavor",
+				Usage: "kexec image flavor to auto-build: zfs or ext4",
+				Value: "zfs",
+			},
 			&cli.PathFlag{
 				Name:  "kexec",
-				Usage: "path to the kexec installer tarball",
-				Value: "result/nixos-kexec-installer-x86_64-linux.tar.gz",
+				Usage: "path to kexec tarball; if empty, built from --images-flake",
 			},
 		},
 		Action: func(ctx *cli.Context) error {
@@ -70,7 +74,17 @@ func machineInitCmd() *cli.Command {
 			host := ctx.Args().Get(1)
 			port := ctx.Int("port")
 			phases := ctx.String("phases")
+
 			kexecTarball := ctx.Path("kexec")
+			if kexecTarball == "" {
+				flavor := ctx.String("kexec-flavor")
+				log.Info().Str("flavor", flavor).Msg("no --kexec provided, building from images flake")
+				var err error
+				kexecTarball, err = buildKexecTarball(cfg.ImagesFlake, cfg.System, flavor)
+				if err != nil {
+					return errors.Wrap(err, "auto-build kexec tarball")
+				}
+			}
 
 			log.Info().Str("machine", machine).Str("host", host).Int("port", port).Msg("initialising machine")
 
