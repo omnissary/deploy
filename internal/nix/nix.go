@@ -3,6 +3,7 @@ package nix
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -13,11 +14,10 @@ import (
 func run(args ...string) ([]byte, error) {
 	log.Debug().Strs("args", args).Msg("nix")
 	cmd := exec.Command("nix", args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, errors.Wrapf(err, "nix %s: %s", strings.Join(args, " "), stderr.String())
+		return nil, errors.Wrapf(err, "nix %s", strings.Join(args, " "))
 	}
 	return out, nil
 }
