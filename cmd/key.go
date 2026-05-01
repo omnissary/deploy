@@ -351,6 +351,9 @@ func ensureHostKey(cfg *Config, machine string) error {
 	if _, err := sops.UpsertMachineRules(cfg.SopsConf, machine, ageKey, sops.UpdateKeys); err != nil {
 		return errors.Wrapf(err, "update sops rules for %s", machine)
 	}
+	if _, err := sops.UpsertAllSharedRules(cfg.SopsConf, cfg.FlakeDir, cfg.SharedGroupsFile, sops.UpdateKeys); err != nil {
+		return errors.Wrap(err, "update shared sops rules")
+	}
 
 	fmt.Printf("path: %s\n", pubPath)
 	fmt.Printf("ssh:  %s", pubLine)

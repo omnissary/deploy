@@ -18,6 +18,7 @@ Global options:
 | `--ssh-user` | `DEPLOY_SSH_USER` | `root` | SSH user for remote ops |
 | `--known-hosts` | `DEPLOY_KNOWN_HOSTS` | `known_hosts` | local known_hosts file |
 | `--hosts-file` | `DEPLOY_HOSTS_FILE` | `hosts` | machine→address registry |
+| `--shared-groups-file` | `DEPLOY_SHARED_GROUPS_FILE` | `vars/shared/groups.yaml` | shared secret group registry |
 | `--debug`, `-d` | `DEPLOY_DEBUG` | false | enable debug logging |
 
 ## Commands
@@ -50,6 +51,10 @@ deploy secret ensure <machine>             # create secrets file if absent
 deploy secret get <machine> <key>          # decrypt and print a value
 deploy secret set <machine> <key>          # read value from stdin and write
 deploy secret update <machine>             # re-encrypt with current .sops.yaml keys
+deploy secret shared ensure <group>        # create shared secrets file if absent
+deploy secret shared get <group> <key>     # decrypt and print a shared value
+deploy secret shared set <group> <key>     # read value from stdin and write
+deploy secret shared update <group>        # re-encrypt with current shared recipients
 ```
 
 ### machine

@@ -4,15 +4,18 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
+	"git.tatikoma.dev/corpix/deploy/internal/sshkey"
 	"gopkg.in/yaml.v3"
 )
 
 const (
 	genericMachineRegex = `machines/[^/]+/secrets\.yaml$`
+	genericSharedRegex  = `vars/shared/[^/]+/secrets\.yaml$`
 	adminVarsRegex      = `vars/admin/.+$`
 )
 
@@ -30,6 +33,10 @@ type creationRule struct {
 type keyGroup struct {
 	PGP []string `yaml:"pgp,omitempty"`
 	Age []string `yaml:"age,omitempty"`
+}
+
+type sharedGroup struct {
+	Machines []string `yaml:"machines"`
 }
 
 // InitConf creates a fresh .sops.yaml with the generic machine secrets rule
@@ -134,6 +141,108 @@ func UpsertMachineRules(confPath, machine, ageKey string, updateFn func(confPath
 			if _, err := os.Stat(path); err != nil {
 				continue
 			}
+			log.Debug().Str("file", path).Msg("sops updatekeys")
+			if err := updateFn(confPath, path); err != nil {
+				return changed, errors.Wrapf(err, "updatekeys %s", path)
+			}
+		}
+	}
+
+	return changed, nil
+}
+
+// UpsertAllSharedRules ensures every shared secret group rule matches
+// vars/shared/groups.yaml. Returns true if .sops.yaml was modified.
+func UpsertAllSharedRules(confPath, flakeDir, groupsPath string, updateFn func(confPath, filePath string) error) (bool, error) {
+	groups, err := loadSharedGroups(groupsPath)
+	if err != nil {
+		return false, err
+	}
+	if len(groups) == 0 {
+		return false, nil
+	}
+
+	names := make([]string, 0, len(groups))
+	for name := range groups {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	changed := false
+	for _, name := range names {
+		groupChanged, err := UpsertSharedRule(confPath, flakeDir, groupsPath, name, updateFn)
+		if err != nil {
+			return changed, err
+		}
+		changed = changed || groupChanged
+	}
+	return changed, nil
+}
+
+// UpsertSharedRule ensures a shared secret creation rule exists for one group.
+// The rule inherits the generic shared-secret key group and appends every
+// machine age recipient listed in vars/shared/groups.yaml.
+func UpsertSharedRule(confPath, flakeDir, groupsPath, group string, updateFn func(confPath, filePath string) error) (bool, error) {
+	log.Debug().Str("group", group).Msg("upsert shared sops rule")
+
+	groups, err := loadSharedGroups(groupsPath)
+	if err != nil {
+		return false, err
+	}
+	entry, ok := groups[group]
+	if !ok {
+		return false, errors.Errorf("shared group %q not found in %s", group, groupsPath)
+	}
+
+	cfg, err := loadSopsYAML(confPath)
+	if err != nil {
+		return false, err
+	}
+
+	genericGroup, err := findGenericGroup(cfg, genericSharedRegex)
+	if err != nil {
+		return false, err
+	}
+
+	ages, err := machineAgeKeys(flakeDir, entry.Machines)
+	if err != nil {
+		return false, errors.Wrapf(err, "derive age keys for shared group %s", group)
+	}
+
+	wantedGroup := keyGroup{
+		PGP: append([]string{}, genericGroup.PGP...),
+		Age: uniqueStrings(append(append([]string{}, genericGroup.Age...), ages...)),
+	}
+
+	groupRegex := `vars/shared/` + group + `/secrets\.yaml$`
+	groupRule := creationRule{PathRegex: groupRegex, KeyGroups: []keyGroup{wantedGroup}}
+
+	idx := -1
+	for i, r := range cfg.CreationRules {
+		if r.PathRegex == groupRegex {
+			idx = i
+			break
+		}
+	}
+
+	changed := false
+	switch {
+	case idx == -1:
+		cfg.CreationRules = prependBefore(cfg.CreationRules, groupRule, genericSharedRegex)
+		changed = true
+	case !rulesEqual(cfg.CreationRules[idx], groupRule):
+		cfg.CreationRules[idx] = groupRule
+		changed = true
+	}
+
+	if changed {
+		if err := writeSopsYAML(confPath, cfg); err != nil {
+			return false, err
+		}
+		log.Info().Str("group", group).Msg("updated shared rule in .sops.yaml")
+
+		path := filepath.Join(flakeDir, "vars", "shared", group, "secrets.yaml")
+		if _, err := os.Stat(path); err == nil {
 			log.Debug().Str("file", path).Msg("sops updatekeys")
 			if err := updateFn(confPath, path); err != nil {
 				return changed, errors.Wrapf(err, "updatekeys %s", path)
@@ -296,6 +405,9 @@ func sessionEligible(r creationRule) bool {
 	if r.PathRegex == adminVarsRegex {
 		return false
 	}
+	if r.PathRegex == genericSharedRegex {
+		return true
+	}
 	if strings.Contains(r.PathRegex, "initrd-ssh") || strings.Contains(r.PathRegex, "openssh") {
 		return false
 	}
@@ -331,6 +443,7 @@ func allEncryptedFiles(flakeDir string) []string {
 	}
 	for _, pat := range []string{
 		filepath.Join(flakeDir, "machines", "*", "secrets.yaml"),
+		filepath.Join(flakeDir, "vars", "shared", "*", "secrets.yaml"),
 		filepath.Join(flakeDir, "vars", "per-machine", "*", "openssh", "ssh_host_ed25519_key"),
 		filepath.Join(flakeDir, "vars", "per-machine", "*", "initrd-ssh", "id_ed25519"),
 	} {
@@ -338,6 +451,75 @@ func allEncryptedFiles(flakeDir string) []string {
 		files = append(files, matches...)
 	}
 	return files
+}
+
+func findGenericGroup(cfg sopsYAML, regex string) (keyGroup, error) {
+	for _, r := range cfg.CreationRules {
+		if r.PathRegex == regex && len(r.KeyGroups) > 0 {
+			return r.KeyGroups[0], nil
+		}
+	}
+	return keyGroup{}, errors.Errorf("generic sops creation rule not found: %s", regex)
+}
+
+func loadSharedGroups(groupsPath string) (map[string]sharedGroup, error) {
+	if _, err := os.Stat(groupsPath); err != nil {
+		if os.IsNotExist(err) {
+			return map[string]sharedGroup{}, nil
+		}
+		return nil, errors.Wrapf(err, "stat %s", groupsPath)
+	}
+
+	raw, err := os.ReadFile(groupsPath)
+	if err != nil {
+		return nil, errors.Wrapf(err, "read %s", groupsPath)
+	}
+
+	var groups map[string]sharedGroup
+	if err := yaml.Unmarshal(raw, &groups); err != nil {
+		return nil, errors.Wrapf(err, "parse %s", groupsPath)
+	}
+	if groups == nil {
+		groups = map[string]sharedGroup{}
+	}
+	return groups, nil
+}
+
+func machineAgeKeys(flakeDir string, machines []string) ([]string, error) {
+	keys := make([]string, 0, len(machines))
+	for _, machine := range machines {
+		pubPath := filepath.Join(flakeDir, "vars", "per-machine", machine, "openssh", "ssh_host_ed25519_key.pub")
+		pub, err := os.ReadFile(pubPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, errors.Wrapf(err, "read host public key for %s", machine)
+		}
+		age, err := sshkey.ToAge(pub)
+		if err != nil {
+			return nil, errors.Wrapf(err, "derive age key for %s", machine)
+		}
+		keys = append(keys, age)
+	}
+	return uniqueStrings(keys), nil
+}
+
+func uniqueStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func updateAllFiles(confPath, flakeDir string, updateFn func(string, string) error) error {

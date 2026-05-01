@@ -18,8 +18,10 @@ type Config struct {
 	FlakeDir string
 	// SopsConf is the absolute path to .sops.yaml.
 	SopsConf string
-	// HostsFile is the absolute path to the hosts JSON registry.
+	// HostsFile is the absolute path to the hosts YAML registry.
 	HostsFile string
+	// SharedGroupsFile is the absolute path to the shared secret group registry.
+	SharedGroupsFile string
 	// KnownHosts is the path to the local known_hosts file.
 	KnownHosts string
 	// SSHUser is the remote user for SSH connections.
@@ -112,6 +114,12 @@ func New() *cli.App {
 				Value:   "hosts",
 				EnvVars: []string{"DEPLOY_HOSTS_FILE"},
 			},
+			&cli.PathFlag{
+				Name:    "shared-groups-file",
+				Usage:   "path to the shared secret group registry",
+				Value:   "vars/shared/groups.yaml",
+				EnvVars: []string{"DEPLOY_SHARED_GROUPS_FILE"},
+			},
 			&cli.StringFlag{
 				Name:    "images-flake",
 				Usage:   "flake ref for the deploy-images repository",
@@ -119,10 +127,10 @@ func New() *cli.App {
 				EnvVars: []string{"DEPLOY_IMAGES_FLAKE"},
 			},
 			&cli.StringFlag{
-				Name:        "system",
-				Usage:       "target NixOS system tuple (e.g. x86_64-linux, aarch64-linux)",
-				Value:       nixSystem(),
-				EnvVars:     []string{"DEPLOY_SYSTEM"},
+				Name:    "system",
+				Usage:   "target NixOS system tuple (e.g. x86_64-linux, aarch64-linux)",
+				Value:   nixSystem(),
+				EnvVars: []string{"DEPLOY_SYSTEM"},
 			},
 			&cli.BoolFlag{
 				Name:    "debug",
@@ -152,13 +160,14 @@ func New() *cli.App {
 			}
 
 			cfg := &Config{
-				FlakeDir:    abs,
-				SopsConf:    filepath.Join(abs, ".sops.yaml"),
-				HostsFile:   resolve(ctx.Path("hosts-file")),
-				KnownHosts:  resolve(ctx.Path("known-hosts")),
-				SSHUser:     ctx.String("ssh-user"),
-				ImagesFlake: ctx.String("images-flake"),
-				System:      ctx.String("system"),
+				FlakeDir:         abs,
+				SopsConf:         filepath.Join(abs, ".sops.yaml"),
+				HostsFile:        resolve(ctx.Path("hosts-file")),
+				SharedGroupsFile: resolve(ctx.Path("shared-groups-file")),
+				KnownHosts:       resolve(ctx.Path("known-hosts")),
+				SSHUser:          ctx.String("ssh-user"),
+				ImagesFlake:      ctx.String("images-flake"),
+				System:           ctx.String("system"),
 			}
 			ctx.App.Metadata = map[string]interface{}{configKey: cfg}
 
@@ -167,6 +176,7 @@ func New() *cli.App {
 				Str("ssh_user", cfg.SSHUser).
 				Str("known_hosts", cfg.KnownHosts).
 				Str("hosts_file", cfg.HostsFile).
+				Str("shared_groups_file", cfg.SharedGroupsFile).
 				Msg("deploy config")
 			return nil
 		},

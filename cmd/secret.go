@@ -107,6 +107,100 @@ func secretCmd() *cli.Command {
 					return nil
 				},
 			},
+			{
+				Name:  "shared",
+				Usage: "manage shared SOPS-encrypted secrets under vars/shared/<group>/secrets.yaml",
+				Subcommands: []*cli.Command{
+					{
+						Name:      "ensure",
+						Usage:     "create vars/shared/<group>/secrets.yaml if it does not exist",
+						ArgsUsage: "<group>",
+						Action: func(ctx *cli.Context) error {
+							if ctx.NArg() < 1 {
+								return errors.New("usage: secret shared ensure <group>")
+							}
+							cfg := getConfig(ctx)
+							return ensureSharedSecrets(cfg, ctx.Args().Get(0))
+						},
+					},
+					{
+						Name:      "get",
+						Usage:     "decrypt and print the value of a shared secret key",
+						ArgsUsage: "<group> <key>",
+						Action: func(ctx *cli.Context) error {
+							if ctx.NArg() < 2 {
+								return errors.New("usage: secret shared get <group> <key>")
+							}
+							cfg := getConfig(ctx)
+							group := ctx.Args().Get(0)
+							key := ctx.Args().Get(1)
+							log.Debug().Str("group", group).Str("key", key).Msg("shared secret get")
+							path := sharedSecretsPath(cfg, group)
+							val, err := sops.DecryptYAMLExtract(path, key)
+							if err != nil {
+								return errors.Wrapf(err, "get shared secret %s/%s", group, key)
+							}
+							fmt.Print(val)
+							if !strings.HasSuffix(val, "\n") {
+								fmt.Println()
+							}
+							return nil
+						},
+					},
+					{
+						Name:      "set",
+						Usage:     "read value from stdin and write it as a shared secret key",
+						ArgsUsage: "<group> <key>",
+						Action: func(ctx *cli.Context) error {
+							if ctx.NArg() < 2 {
+								return errors.New("usage: secret shared set <group> <key>")
+							}
+							cfg := getConfig(ctx)
+							group := ctx.Args().Get(0)
+							key := ctx.Args().Get(1)
+							log.Debug().Str("group", group).Str("key", key).Msg("shared secret set")
+
+							if err := ensureSharedSecrets(cfg, group); err != nil {
+								return err
+							}
+
+							raw, err := io.ReadAll(os.Stdin)
+							if err != nil {
+								return errors.Wrap(err, "read stdin")
+							}
+							value := strings.TrimRight(string(raw), "\n")
+
+							path := sharedSecretsPath(cfg, group)
+							if err := sops.SetYAML(path, key, value); err != nil {
+								return errors.Wrapf(err, "set shared secret %s/%s", group, key)
+							}
+							log.Info().Str("group", group).Str("key", key).Msg("shared secret set")
+							return nil
+						},
+					},
+					{
+						Name:      "update",
+						Usage:     "re-encrypt shared secrets with the current keys from .sops.yaml",
+						ArgsUsage: "<group>",
+						Action: func(ctx *cli.Context) error {
+							if ctx.NArg() < 1 {
+								return errors.New("usage: secret shared update <group>")
+							}
+							cfg := getConfig(ctx)
+							group := ctx.Args().Get(0)
+							path := sharedSecretsPath(cfg, group)
+							if _, err := sops.UpsertSharedRule(cfg.SopsConf, cfg.FlakeDir, cfg.SharedGroupsFile, group, sops.UpdateKeys); err != nil {
+								return errors.Wrapf(err, "sync shared keys for %s", group)
+							}
+							log.Info().Str("group", group).Str("file", path).Msg("updating shared secret keys")
+							if err := sops.UpdateKeys(cfg.SopsConf, path); err != nil {
+								return errors.Wrapf(err, "update keys for shared group %s", group)
+							}
+							return nil
+						},
+					},
+				},
+			},
 		},
 	}
 }
@@ -131,6 +225,35 @@ func ensureSecrets(cfg *Config, machine string) error {
 	}
 	if err := sops.EncryptYAML(cfg.SopsConf, path); err != nil {
 		return errors.Wrapf(err, "encrypt secrets for %s", machine)
+	}
+	return nil
+}
+
+func sharedSecretsPath(cfg *Config, group string) string {
+	return filepath.Join(cfg.FlakeDir, "vars", "shared", group, "secrets.yaml")
+}
+
+func ensureSharedSecrets(cfg *Config, group string) error {
+	path := sharedSecretsPath(cfg, group)
+
+	if _, err := sops.UpsertSharedRule(cfg.SopsConf, cfg.FlakeDir, cfg.SharedGroupsFile, group, sops.UpdateKeys); err != nil {
+		return errors.Wrapf(err, "sync shared sops rule for %s", group)
+	}
+
+	if _, err := os.Stat(path); err == nil {
+		log.Debug().Str("group", group).Msg("shared secrets.yaml already exists")
+		return nil
+	}
+
+	log.Info().Str("group", group).Str("file", path).Msg("creating shared secrets file")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return errors.Wrapf(err, "create shared dir for %s", group)
+	}
+	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+		return errors.Wrapf(err, "write empty shared secrets for %s", group)
+	}
+	if err := sops.EncryptYAML(cfg.SopsConf, path); err != nil {
+		return errors.Wrapf(err, "encrypt shared secrets for %s", group)
 	}
 	return nil
 }
