@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	gosops "github.com/getsops/sops/v3"
 	"github.com/getsops/sops/v3/aes"
 	"github.com/getsops/sops/v3/cmd/sops/common"
 	"github.com/getsops/sops/v3/cmd/sops/formats"
 	"github.com/getsops/sops/v3/config"
-	"github.com/getsops/sops/v3/decrypt"
 	"github.com/getsops/sops/v3/keyservice"
 	"github.com/getsops/sops/v3/version"
 	"gopkg.in/yaml.v3"
@@ -27,6 +27,18 @@ func keyServices() []keyservice.KeyServiceClient {
 
 func newCipher() gosops.Cipher {
 	return aes.NewCipher()
+}
+
+func decryptionOrder() []string {
+	if raw := strings.TrimSpace(os.Getenv("SOPS_DECRYPTION_ORDER")); raw != "" {
+		parts := strings.FieldsFunc(raw, func(r rune) bool {
+			return r == ',' || r == ':' || r == ' ' || r == '\t' || r == '\n'
+		})
+		if len(parts) > 0 {
+			return parts
+		}
+	}
+	return append([]string{}, gosops.DefaultDecryptionOrder...)
 }
 
 // EncryptBinary encrypts raw bytes as a sops binary file.
@@ -86,13 +98,27 @@ func EncryptBinary(confPath, filePath string, plaintext []byte) ([]byte, error) 
 // DecryptBinary decrypts a sops binary-format file and returns plaintext bytes.
 func DecryptBinary(filePath string) ([]byte, error) {
 	log.Debug().Str("file", filePath).Msg("sops decrypt binary")
-	data, err := os.ReadFile(filePath)
+	storesCfg := config.NewStoresConfig()
+	store := common.StoreForFormat(formats.Binary, storesCfg)
+
+	tree, err := common.LoadEncryptedFile(store, filePath)
 	if err != nil {
-		return nil, errors.Wrapf(err, "read %s", filePath)
+		return nil, errors.Wrapf(err, "sops load encrypted %s", filePath)
 	}
-	plain, err := decrypt.Data(data, "binary")
+
+	_, err = common.DecryptTree(common.DecryptTreeOpts{
+		Tree:            tree,
+		KeyServices:     keyServices(),
+		DecryptionOrder: decryptionOrder(),
+		Cipher:          newCipher(),
+	})
 	if err != nil {
 		return nil, errors.Wrapf(err, "sops decrypt binary %s", filePath)
+	}
+
+	plain, err := store.EmitPlainFile(tree.Branches)
+	if err != nil {
+		return nil, errors.Wrap(err, "sops emit plain binary")
 	}
 	return plain, nil
 }
@@ -159,14 +185,29 @@ func EncryptYAML(confPath, filePath string) error {
 // DecryptYAMLExtract decrypts a YAML secrets file and returns the string value at key.
 func DecryptYAMLExtract(filePath, key string) (string, error) {
 	log.Debug().Str("file", filePath).Str("key", key).Msg("sops decrypt yaml extract")
-	data, err := os.ReadFile(filePath)
+	storesCfg := config.NewStoresConfig()
+	store := common.StoreForFormat(formats.Yaml, storesCfg)
+
+	tree, err := common.LoadEncryptedFile(store, filePath)
 	if err != nil {
-		return "", errors.Wrapf(err, "read %s", filePath)
+		return "", errors.Wrapf(err, "sops load encrypted %s", filePath)
 	}
-	plain, err := decrypt.Data(data, "yaml")
+
+	_, err = common.DecryptTree(common.DecryptTreeOpts{
+		Tree:            tree,
+		KeyServices:     keyServices(),
+		DecryptionOrder: decryptionOrder(),
+		Cipher:          newCipher(),
+	})
 	if err != nil {
 		return "", errors.Wrapf(err, "sops decrypt yaml %s", filePath)
 	}
+
+	plain, err := store.EmitPlainFile(tree.Branches)
+	if err != nil {
+		return "", errors.Wrap(err, "sops emit plain yaml")
+	}
+
 	var m map[string]interface{}
 	if err := yaml.Unmarshal(plain, &m); err != nil {
 		return "", errors.Wrap(err, "parse decrypted yaml")
@@ -191,9 +232,10 @@ func SetYAML(filePath, key, value string) error {
 	}
 
 	dataKey, err := common.DecryptTree(common.DecryptTreeOpts{
-		Tree:        tree,
-		KeyServices: keyServices(),
-		Cipher:      newCipher(),
+		Tree:            tree,
+		KeyServices:     keyServices(),
+		DecryptionOrder: decryptionOrder(),
+		Cipher:          newCipher(),
 	})
 	if err != nil {
 		return errors.Wrapf(err, "sops decrypt tree %s", filePath)
@@ -236,7 +278,7 @@ func UpdateKeys(confPath, filePath string) error {
 		return errors.Wrapf(err, "sops load encrypted %s", filePath)
 	}
 
-	dataKey, err := tree.Metadata.GetDataKeyWithKeyServices(keyServices(), nil)
+	dataKey, err := tree.Metadata.GetDataKeyWithKeyServices(keyServices(), decryptionOrder())
 	if err != nil {
 		return errors.Wrapf(err, "sops get data key %s", filePath)
 	}
