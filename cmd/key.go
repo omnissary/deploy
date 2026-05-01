@@ -300,6 +300,7 @@ func ensureHostKey(cfg *Config, machine string) error {
 	dir := filepath.Join(cfg.FlakeDir, "vars", "per-machine", machine, "openssh")
 	pubPath := filepath.Join(dir, "ssh_host_ed25519_key.pub")
 	privPath := filepath.Join(dir, "ssh_host_ed25519_key")
+	generated := false
 
 	if _, err := os.Stat(pubPath); err == nil {
 		log.Debug().Str("machine", machine).Msg("host key already exists")
@@ -334,6 +335,7 @@ func ensureHostKey(cfg *Config, machine string) error {
 		if err := os.WriteFile(pubPath, pubLine, 0o644); err != nil {
 			return errors.Wrapf(err, "write host public key")
 		}
+		generated = true
 		log.Info().Str("machine", machine).Str("path", pubPath).Msg("host key written")
 	}
 
@@ -348,16 +350,16 @@ func ensureHostKey(cfg *Config, machine string) error {
 	}
 	log.Debug().Str("machine", machine).Str("age", ageKey).Msg("derived age key")
 
-	if _, err := sops.UpsertMachineRules(cfg.SopsConf, machine, ageKey, sops.UpdateKeys); err != nil {
+	rulesChanged, err := sops.UpsertMachineRules(cfg.SopsConf, machine, ageKey, sops.UpdateKeys)
+	if err != nil {
 		return errors.Wrapf(err, "update sops rules for %s", machine)
 	}
-	if _, err := sops.UpsertAllSharedRules(cfg.SopsConf, cfg.FlakeDir, cfg.SharedGroupsFile, sops.UpdateKeys); err != nil {
-		return errors.Wrap(err, "update shared sops rules")
-	}
 
-	fmt.Printf("path: %s\n", pubPath)
-	fmt.Printf("ssh:  %s", pubLine)
-	fmt.Printf("age:  %s\n", ageKey)
+	if generated || rulesChanged {
+		fmt.Printf("path: %s\n", pubPath)
+		fmt.Printf("ssh:  %s", pubLine)
+		fmt.Printf("age:  %s\n", ageKey)
+	}
 	return nil
 }
 
