@@ -365,6 +365,7 @@ func ensureInitrdKey(cfg *Config, machine string) error {
 	dir := filepath.Join(cfg.FlakeDir, "vars", "per-machine", machine, "initrd-ssh")
 	privPath := filepath.Join(dir, "id_ed25519")
 	pubPath := filepath.Join(dir, "id_ed25519.pub")
+	generated := false
 
 	privExists := fileExists(privPath)
 	pubExists := fileExists(pubPath)
@@ -406,25 +407,33 @@ func ensureInitrdKey(cfg *Config, machine string) error {
 		if err := os.WriteFile(pubPath, pubLine, 0o644); err != nil {
 			return errors.Wrapf(err, "write initrd public key")
 		}
+		generated = true
 		log.Info().Str("machine", machine).Str("path", pubPath).Msg("initrd key written")
 	}
 
-	// Verify key pair integrity.
-	privPEM, err := sops.DecryptBinary(privPath)
-	if err != nil {
-		return errors.Wrapf(err, "decrypt initrd private key for %s", machine)
-	}
 	pubLine, err := os.ReadFile(pubPath)
 	if err != nil {
 		return errors.Wrapf(err, "read initrd public key")
 	}
-	if err := sshkey.VerifyPair(privPEM, pubLine); err != nil {
-		return errors.Wrapf(err, "key pair mismatch for %s initrd key", machine)
+
+	// Only decrypt and verify immediately after generation. Existing encrypted
+	// keys are consumed later during init/deploy; verifying on every build/eval
+	// causes an unnecessary secret decryption and YubiKey touch.
+	if generated {
+		privPEM, err := sops.DecryptBinary(privPath)
+		if err != nil {
+			return errors.Wrapf(err, "decrypt initrd private key for %s", machine)
+		}
+		if err := sshkey.VerifyPair(privPEM, pubLine); err != nil {
+			return errors.Wrapf(err, "key pair mismatch for %s initrd key", machine)
+		}
 	}
 
-	fmt.Printf("secret:      %s\n", privPath)
-	fmt.Printf("deploy path: /etc/secrets/initrd_host_ed25519_key\n")
-	fmt.Printf("public:      %s", pubLine)
+	if generated {
+		fmt.Printf("secret:      %s\n", privPath)
+		fmt.Printf("deploy path: /etc/secrets/initrd_host_ed25519_key\n")
+		fmt.Printf("public:      %s", pubLine)
+	}
 	return nil
 }
 
