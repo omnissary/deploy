@@ -352,6 +352,7 @@ func machineDeployCmd() *cli.Command {
 			}
 
 			sshArgs := []string{"-F", sshConfigPath}
+			log.Info().Str("machine", machine).Str("host", targetHost).Msg("opening SSH control connection")
 
 			masterArgs := append(append([]string{}, sshArgs...),
 				"-M",
@@ -389,9 +390,10 @@ func machineDeployCmd() *cli.Command {
 			if !ready {
 				return errors.Errorf("timed out waiting for ssh control master to %s", targetHost)
 			}
-			log.Debug().Str("host", targetHost).Msg("ssh control master ready")
+			log.Info().Str("machine", machine).Str("host", targetHost).Msg("SSH control connection ready")
 
 			// Upload initrd host keys.
+			log.Info().Str("machine", machine).Msg("checking initrd SSH host keys")
 			if err := uploadInitrdKeys(cfg, machine, sshAlias, sshArgs); err != nil {
 				return err
 			}
@@ -622,16 +624,37 @@ func uploadInitrdKeys(cfg *Config, machine, targetHost string, sshArgs []string)
 		if err != nil {
 			return err
 		}
+		localPublic := filepath.Join(cfg.FlakeDir, "vars", "per-machine", machine, "initrd-ssh", localKey+".pub")
 		localSecret := filepath.Join(cfg.FlakeDir, "vars", "per-machine", machine, "initrd-ssh", localKey)
 		if !fileExists(localSecret) {
 			return errors.Errorf("missing initrd SSH key %s", localSecret)
 		}
+		if !fileExists(localPublic) {
+			return errors.Errorf("missing initrd SSH public key %s", localPublic)
+		}
+
+		pubLine, err := os.ReadFile(localPublic)
+		if err != nil {
+			return errors.Wrapf(err, "read initrd public key %s", localPublic)
+		}
+
+		log.Info().Str("path", hostKeyPath).Msg("checking remote initrd host key")
+		matches, err := remoteInitrdKeyMatches(targetHost, sshArgs, hostKeyPath, pubLine)
+		if err != nil {
+			return err
+		}
+		if matches {
+			log.Info().Str("path", hostKeyPath).Msg("remote initrd host key already matches; skipping decrypt/upload")
+			continue
+		}
+
+		log.Info().Str("path", hostKeyPath).Msg("remote initrd host key differs or is missing; decrypting local key")
 		privPEM, err := sops.DecryptBinary(localSecret)
 		if err != nil {
 			return errors.Wrapf(err, "decrypt initrd key %s", localSecret)
 		}
 
-		log.Debug().Str("key", hostKeyPath).Str("host", targetHost).Msg("uploading initrd host key")
+		log.Info().Str("path", hostKeyPath).Msg("uploading initrd host key")
 		remoteCmd := fmt.Sprintf(
 			"install -d -m 0755 '%s' && cat > '%s.tmp' && chmod 600 '%s.tmp' && mv '%s.tmp' '%s'",
 			filepath.Dir(hostKeyPath), hostKeyPath, hostKeyPath, hostKeyPath, hostKeyPath,
@@ -645,6 +668,44 @@ func uploadInitrdKeys(cfg *Config, machine, targetHost string, sshArgs []string)
 		}
 	}
 	return nil
+}
+
+func remoteInitrdKeyMatches(targetHost string, sshArgs []string, hostKeyPath string, localPublic []byte) (bool, error) {
+	remoteCmd := fmt.Sprintf("test -r '%s' && ssh-keygen -y -f '%s' 2>/dev/null", hostKeyPath, hostKeyPath)
+	runArgs := append(append([]string{}, sshArgs...), targetHost, remoteCmd)
+	cmd := exec.Command("ssh", runArgs...)
+	out, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if exitErr.ExitCode() == 1 {
+				log.Info().Str("path", hostKeyPath).Msg("remote initrd host key not present yet")
+				return false, nil
+			}
+			return false, errors.Wrapf(err, "inspect remote initrd key %s", hostKeyPath)
+		}
+		return false, errors.Wrapf(err, "inspect remote initrd key %s", hostKeyPath)
+	}
+
+	remoteNormalized := normalizeAuthorizedKey(out)
+	localNormalized := normalizeAuthorizedKey(localPublic)
+	if remoteNormalized == localNormalized {
+		return true, nil
+	}
+
+	log.Info().
+		Str("path", hostKeyPath).
+		Str("remote", remoteNormalized).
+		Str("local", localNormalized).
+		Msg("remote initrd host key does not match local public key")
+	return false, nil
+}
+
+func normalizeAuthorizedKey(line []byte) string {
+	fields := strings.Fields(string(line))
+	if len(fields) < 2 {
+		return strings.TrimSpace(string(line))
+	}
+	return fields[0] + " " + fields[1]
 }
 
 func initrdLocalKey(base string) (string, error) {
