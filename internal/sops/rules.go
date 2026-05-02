@@ -513,14 +513,29 @@ func uniqueStrings(values []string) []string {
 }
 
 func updateAllFiles(confPath, flakeDir string, updateFn func(string, string) error) error {
+	files := make([]string, 0)
 	for _, path := range allEncryptedFiles(flakeDir) {
 		if _, err := os.Stat(path); err != nil {
 			continue
 		}
-		log.Debug().Str("file", path).Msg("sops updatekeys")
+		files = append(files, path)
+	}
+
+	total := len(files)
+	for i, path := range files {
+		log.Info().
+			Int("index", i+1).
+			Int("total", total).
+			Str("file", path).
+			Msg("re-encrypting secret with updated recipients")
 		if err := updateFn(confPath, path); err != nil {
 			return errors.Wrapf(err, "updatekeys %s", path)
 		}
+		log.Info().
+			Int("index", i+1).
+			Int("total", total).
+			Str("file", path).
+			Msg("re-encrypted secret")
 	}
 	return nil
 }
