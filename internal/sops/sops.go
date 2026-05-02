@@ -219,6 +219,32 @@ func DecryptYAMLExtract(filePath, key string) (string, error) {
 	return fmt.Sprintf("%v", v), nil
 }
 
+// VerifyFile checks that a SOPS-encrypted file can be decrypted and that its
+// integrity metadata is valid.
+func VerifyFile(filePath string) error {
+	log.Debug().Str("file", filePath).Msg("sops verify file")
+
+	storesCfg := config.NewStoresConfig()
+	format := formats.FormatForPath(filePath)
+	store := common.StoreForFormat(format, storesCfg)
+
+	tree, err := common.LoadEncryptedFile(store, filePath)
+	if err != nil {
+		return errors.Wrapf(err, "sops load encrypted %s", filePath)
+	}
+
+	if _, err := common.DecryptTree(common.DecryptTreeOpts{
+		Tree:            tree,
+		KeyServices:     keyServices(),
+		DecryptionOrder: decryptionOrder(),
+		Cipher:          newCipher(),
+	}); err != nil {
+		return errors.Wrapf(err, "sops verify %s", filePath)
+	}
+
+	return nil
+}
+
 // SetYAML decrypts the file, sets key=value, and re-encrypts in-place.
 func SetYAML(filePath, key, value string) error {
 	log.Debug().Str("file", filePath).Str("key", key).Msg("sops set yaml key")

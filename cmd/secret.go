@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"git.tatikoma.dev/corpix/atlas/errors"
@@ -108,6 +109,30 @@ func secretCmd() *cli.Command {
 				},
 			},
 			{
+				Name:      "verify",
+				Usage:     "verify secret integrity/decryption for one machine or all machine secrets",
+				ArgsUsage: "[<machine>]",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:  "all",
+						Usage: "verify all machine secret files under machines/*/secrets.yaml",
+					},
+				},
+				Action: func(ctx *cli.Context) error {
+					cfg := getConfig(ctx)
+					if ctx.Bool("all") {
+						if ctx.NArg() != 0 {
+							return errors.New("usage: secret verify --all")
+						}
+						return verifyAllMachineSecrets(cfg)
+					}
+					if ctx.NArg() < 1 {
+						return errors.New("usage: secret verify <machine> or secret verify --all")
+					}
+					return verifySecretFile(secretsPath(cfg, ctx.Args().Get(0)))
+				},
+			},
+			{
 				Name:  "shared",
 				Usage: "manage shared SOPS-encrypted secrets under vars/shared/<group>/secrets.yaml",
 				Subcommands: []*cli.Command{
@@ -199,6 +224,18 @@ func secretCmd() *cli.Command {
 							return nil
 						},
 					},
+					{
+						Name:      "verify",
+						Usage:     "verify shared secret integrity/decryption",
+						ArgsUsage: "<group>",
+						Action: func(ctx *cli.Context) error {
+							if ctx.NArg() < 1 {
+								return errors.New("usage: secret shared verify <group>")
+							}
+							cfg := getConfig(ctx)
+							return verifySecretFile(sharedSecretsPath(cfg, ctx.Args().Get(0)))
+						},
+					},
 				},
 			},
 		},
@@ -254,6 +291,44 @@ func ensureSharedSecrets(cfg *Config, group string) error {
 	}
 	if err := sops.EncryptYAML(cfg.SopsConf, path); err != nil {
 		return errors.Wrapf(err, "encrypt shared secrets for %s", group)
+	}
+	return nil
+}
+
+func verifySecretFile(path string) error {
+	log.Info().Str("file", path).Msg("verifying secret")
+	if err := sops.VerifyFile(path); err != nil {
+		return err
+	}
+	log.Info().Str("file", path).Msg("secret verified")
+	return nil
+}
+
+func verifyAllMachineSecrets(cfg *Config) error {
+	paths, err := filepath.Glob(filepath.Join(cfg.FlakeDir, "machines", "*", "secrets.yaml"))
+	if err != nil {
+		return errors.Wrap(err, "glob machine secrets")
+	}
+	sort.Strings(paths)
+	if len(paths) == 0 {
+		log.Info().Msg("no machine secrets found")
+		return nil
+	}
+
+	for i, path := range paths {
+		log.Info().
+			Int("index", i+1).
+			Int("total", len(paths)).
+			Str("file", path).
+			Msg("verifying secret")
+		if err := sops.VerifyFile(path); err != nil {
+			return err
+		}
+		log.Info().
+			Int("index", i+1).
+			Int("total", len(paths)).
+			Str("file", path).
+			Msg("secret verified")
 	}
 	return nil
 }
