@@ -36,6 +36,30 @@ func secretCmd() *cli.Command {
 				},
 			},
 			{
+				Name:      "list",
+				Usage:     "list top-level secret keys for one machine or all machine secret files",
+				ArgsUsage: "[<machine>]",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:  "all",
+						Usage: "list keys for all machine secret files under machines/*/secrets.yaml",
+					},
+				},
+				Action: func(ctx *cli.Context) error {
+					cfg := getConfig(ctx)
+					if ctx.Bool("all") {
+						if ctx.NArg() != 0 {
+							return errors.New("usage: secret list --all")
+						}
+						return listAllMachineSecrets(cfg)
+					}
+					if ctx.NArg() < 1 {
+						return errors.New("usage: secret list <machine> or secret list --all")
+					}
+					return listSecretFileKeys(secretsPath(cfg, ctx.Args().Get(0)), ctx.Args().Get(0))
+				},
+			},
+			{
 				Name:      "get",
 				Usage:     "decrypt and print the value of a secret key",
 				ArgsUsage: "<machine> <key>",
@@ -150,6 +174,18 @@ func secretCmd() *cli.Command {
 							}
 							cfg := getConfig(ctx)
 							return ensureSharedSecrets(cfg, ctx.Args().Get(0))
+						},
+					},
+					{
+						Name:      "list",
+						Usage:     "list top-level shared secret keys",
+						ArgsUsage: "<group>",
+						Action: func(ctx *cli.Context) error {
+							if ctx.NArg() < 1 {
+								return errors.New("usage: secret shared list <group>")
+							}
+							cfg := getConfig(ctx)
+							return listSecretFileKeys(sharedSecretsPath(cfg, ctx.Args().Get(0)), ctx.Args().Get(0))
 						},
 					},
 					{
@@ -366,6 +402,38 @@ func verifyAllSecrets(cfg *Config, fix bool) error {
 			Int("total", len(paths)).
 			Str("file", path).
 			Msg("secret verified")
+	}
+	return nil
+}
+
+func listSecretFileKeys(path, label string) error {
+	log.Info().Str("file", path).Msg("listing secret keys")
+	keys, err := sops.ListYAMLKeys(path)
+	if err != nil {
+		return err
+	}
+	for _, key := range keys {
+		fmt.Printf("%s\t%s\n", label, key)
+	}
+	return nil
+}
+
+func listAllMachineSecrets(cfg *Config) error {
+	paths, err := filepath.Glob(filepath.Join(cfg.FlakeDir, "machines", "*", "secrets.yaml"))
+	if err != nil {
+		return errors.Wrap(err, "glob machine secrets")
+	}
+	sort.Strings(paths)
+	if len(paths) == 0 {
+		log.Info().Msg("no machine secrets found")
+		return nil
+	}
+
+	for _, path := range paths {
+		machine := filepath.Base(filepath.Dir(path))
+		if err := listSecretFileKeys(path, machine); err != nil {
+			return err
+		}
 	}
 	return nil
 }

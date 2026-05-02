@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	gosops "github.com/getsops/sops/v3"
@@ -217,6 +218,47 @@ func DecryptYAMLExtract(filePath, key string) (string, error) {
 		return "", errors.Errorf("key %q not found in %s", key, filePath)
 	}
 	return fmt.Sprintf("%v", v), nil
+}
+
+// ListYAMLKeys decrypts a YAML secrets file and returns its top-level keys in
+// sorted order.
+func ListYAMLKeys(filePath string) ([]string, error) {
+	log.Debug().Str("file", filePath).Msg("sops list yaml keys")
+
+	storesCfg := config.NewStoresConfig()
+	store := common.StoreForFormat(formats.Yaml, storesCfg)
+
+	tree, err := common.LoadEncryptedFile(store, filePath)
+	if err != nil {
+		return nil, errors.Wrapf(err, "sops load encrypted %s", filePath)
+	}
+
+	_, err = common.DecryptTree(common.DecryptTreeOpts{
+		Tree:            tree,
+		KeyServices:     keyServices(),
+		DecryptionOrder: decryptionOrder(),
+		Cipher:          newCipher(),
+	})
+	if err != nil {
+		return nil, errors.Wrapf(err, "sops decrypt yaml %s", filePath)
+	}
+
+	plain, err := store.EmitPlainFile(tree.Branches)
+	if err != nil {
+		return nil, errors.Wrap(err, "sops emit plain yaml")
+	}
+
+	var m map[string]interface{}
+	if err := yaml.Unmarshal(plain, &m); err != nil {
+		return nil, errors.Wrap(err, "parse decrypted yaml")
+	}
+
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys, nil
 }
 
 // VerifyFile checks that a SOPS-encrypted file can be decrypted and that its
