@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,64 @@ import (
 	"git.tatikoma.dev/corpix/deploy/internal/nix"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
 )
+
+const (
+	processStdoutPrefix = "\x1b[1;37m┃\x1b[0m "
+	processStderrPrefix = "\x1b[1;31m┃\x1b[0m "
+)
+
+type linePrefixWriter struct {
+	dst         io.Writer
+	prefix      []byte
+	atLineStart bool
+}
+
+func newLinePrefixWriter(dst io.Writer, prefix string) *linePrefixWriter {
+	return &linePrefixWriter{
+		dst:         dst,
+		prefix:      []byte(prefix),
+		atLineStart: true,
+	}
+}
+
+func (w *linePrefixWriter) Write(p []byte) (int, error) {
+	written := 0
+	for len(p) > 0 {
+		if w.atLineStart {
+			if _, err := w.dst.Write(w.prefix); err != nil {
+				return written, err
+			}
+			w.atLineStart = false
+		}
+
+		newline := bytes.IndexByte(p, '\n')
+		chunkEnd := len(p)
+		if newline >= 0 {
+			chunkEnd = newline + 1
+		}
+
+		n, err := w.dst.Write(p[:chunkEnd])
+		written += n
+		if err != nil {
+			return written, err
+		}
+
+		if newline >= 0 {
+			w.atLineStart = true
+		}
+		p = p[chunkEnd:]
+	}
+
+	return written, nil
+}
+
+func processStdoutWriter() io.Writer {
+	return newLinePrefixWriter(os.Stdout, processStdoutPrefix)
+}
+
+func processStderrWriter() io.Writer {
+	return newLinePrefixWriter(os.Stderr, processStderrPrefix)
+}
 
 func machineCmd() *cli.Command {
 	return &cli.Command{
@@ -146,12 +205,12 @@ func machineInitCmd() *cli.Command {
 				cfg.SSHTarget(host),
 			)
 
-			log.Info().Str("machine", machine).Str("host", host).Int("port", port).Msg("running nixos-anywhere")
+			log.Info().Str("machine", machine).Str("host", host).Int("port", port).Msg("running NixOS Anywhere")
 			cmd := exec.Command("nixos-anywhere", args...)
 			cmd.Env = append(os.Environ(), "HOME="+cfg.FlakeDir)
 			cmd.Stdin = os.Stdin
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
+			cmd.Stdout = processStdoutWriter()
+			cmd.Stderr = processStderrWriter()
 			if err := cmd.Run(); err != nil {
 				return errors.Wrap(err, "nixos-anywhere")
 			}
@@ -321,7 +380,7 @@ func machineDeployCmd() *cli.Command {
 				targetHost = h
 			}
 
-			log.Info().Str("machine", machine).Str("host", targetHost).Msg("deploying")
+			log.Info().Str("machine", machine).Str("host", targetHost).Msg("starting deployment")
 
 			// Establish a per-deploy SSH config and ControlMaster so plain ssh
 			// invocations and nix copy resolve the exact same target alias.
@@ -359,16 +418,23 @@ func machineDeployCmd() *cli.Command {
 				"-N", sshAlias,
 			)
 			master := exec.Command("ssh", masterArgs...)
-			master.Stderr = os.Stderr
+			master.Stderr = processStderrWriter()
+			masterErrCh := make(chan error, 1)
 			if err := master.Start(); err != nil {
 				return errors.Wrap(err, "start ssh control master")
 			}
+			go func() {
+				masterErrCh <- master.Wait()
+			}()
 			defer func() {
 				checkArgs := append(append([]string{}, sshArgs...),
 					"-O", "exit", sshAlias,
 				)
 				_ = exec.Command("ssh", checkArgs...).Run()
-				_ = master.Wait()
+				select {
+				case <-masterErrCh:
+				default:
+				}
 			}()
 
 			// Wait until ControlMaster is ready.
@@ -382,8 +448,13 @@ func machineDeployCmd() *cli.Command {
 					ready = true
 					break
 				}
-				if master.ProcessState != nil {
+				select {
+				case err := <-masterErrCh:
+					if err != nil {
+						return errors.Wrap(err, "ssh control master exited")
+					}
 					return errors.New("ssh control master exited unexpectedly")
+				default:
 				}
 				time.Sleep(100 * time.Millisecond)
 			}
@@ -392,9 +463,9 @@ func machineDeployCmd() *cli.Command {
 			}
 			log.Info().Str("machine", machine).Str("host", targetHost).Msg("SSH control connection ready")
 
-			// Upload the managed OpenSSH host key before activation so sops-nix
+			// Upload the managed ssh host key before activation so sops-nix
 			// derives the expected age identity from /etc/ssh/ssh_host_ed25519_key.
-			log.Info().Str("machine", machine).Msg("checking OpenSSH host key")
+			log.Info().Str("machine", machine).Msg("checking ssh host key")
 			if err := uploadOpenSSHHostKey(cfg, machine, sshAlias, sshArgs); err != nil {
 				return err
 			}
@@ -406,13 +477,13 @@ func machineDeployCmd() *cli.Command {
 			}
 
 			// Build and copy toplevel.
-			log.Info().Str("machine", machine).Msg("building toplevel")
+			log.Info().Str("machine", machine).Msg("building system toplevel")
 			toplevel, err := nix.Build(cfg.FlakeDir, cfg.MachineAttr(machine, "config.system.build.toplevel"))
 			if err != nil {
 				return errors.Wrapf(err, "build toplevel for %s", machine)
 			}
 
-			log.Info().Str("machine", machine).Str("host", targetHost).Msg("copying closure")
+			log.Info().Str("machine", machine).Str("host", targetHost).Msg("copying system closure")
 			sshURL := "ssh://" + sshAlias
 			if err := nix.Copy(toplevel, sshURL, sshArgs); err != nil {
 				return errors.Wrapf(err, "copy closure to %s", targetHost)
@@ -427,13 +498,13 @@ func machineDeployCmd() *cli.Command {
 			)
 			runArgs := append(append([]string{}, sshArgs...), sshAlias, switchCmd)
 			switchExec := exec.Command("ssh", runArgs...)
-			switchExec.Stdout = os.Stdout
-			switchExec.Stderr = os.Stderr
+			switchExec.Stdout = processStdoutWriter()
+			switchExec.Stderr = processStderrWriter()
 			if err := switchExec.Run(); err != nil {
 				return errors.Wrap(err, "switch-to-configuration")
 			}
 
-			log.Info().Str("machine", machine).Msg("deploy complete")
+			log.Info().Str("machine", machine).Msg("deployment complete")
 			return nil
 		},
 	}
@@ -515,8 +586,8 @@ func machineUnlockZFSCmd() *cli.Command {
 			sshArgs := append(cfg.SSHArgs(), "-p", fmt.Sprintf("%d", initrdPort), cfg.SSHTarget(host), remoteCmd)
 			cmd := exec.Command("ssh", sshArgs...)
 			cmd.Stdin = strings.NewReader(key)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
+			cmd.Stdout = processStdoutWriter()
+			cmd.Stderr = processStderrWriter()
 			if err := cmd.Run(); err != nil {
 				return errors.Wrap(err, "send zfs key via ssh")
 			}
@@ -621,34 +692,34 @@ func uploadOpenSSHHostKey(cfg *Config, machine, targetHost string, sshArgs []str
 	localPublic := filepath.Join(cfg.FlakeDir, "vars", "per-machine", machine, "openssh", "ssh_host_ed25519_key.pub")
 	localSecret := filepath.Join(cfg.FlakeDir, "vars", "per-machine", machine, "openssh", "ssh_host_ed25519_key")
 	if !fileExists(localSecret) {
-		return errors.Errorf("missing OpenSSH host key %s", localSecret)
+			return errors.Errorf("missing ssh host key %s", localSecret)
 	}
 	if !fileExists(localPublic) {
-		return errors.Errorf("missing OpenSSH host public key %s", localPublic)
+			return errors.Errorf("missing ssh host public key %s", localPublic)
 	}
 
 	pubLine, err := os.ReadFile(localPublic)
 	if err != nil {
-		return errors.Wrapf(err, "read OpenSSH host public key %s", localPublic)
+			return errors.Wrapf(err, "read ssh host public key %s", localPublic)
 	}
 
-	log.Info().Str("path", hostKeyPath).Msg("checking remote OpenSSH host key")
-	matches, err := remoteKeyMatches(targetHost, sshArgs, hostKeyPath, pubLine, "OpenSSH host key")
+	log.Info().Str("path", hostKeyPath).Msg("checking remote ssh host key")
+	matches, err := remoteKeyMatches(targetHost, sshArgs, hostKeyPath, pubLine, "ssh host key")
 	if err != nil {
 		return err
 	}
 	if matches {
-		log.Info().Str("path", hostKeyPath).Msg("remote OpenSSH host key already matches; skipping decrypt/upload")
+			log.Info().Str("path", hostKeyPath).Msg("remote ssh host key already matches, skipping decrypt/upload")
 		return nil
 	}
 
-	log.Info().Str("path", hostKeyPath).Msg("remote OpenSSH host key differs or is missing; decrypting local key")
+	log.Info().Str("path", hostKeyPath).Msg("remote ssh host key differs or is missing, decrypting local key")
 	privPEM, err := sops.DecryptBinary(localSecret)
 	if err != nil {
-		return errors.Wrapf(err, "decrypt OpenSSH host key %s", localSecret)
+			return errors.Wrapf(err, "decrypt ssh host key %s", localSecret)
 	}
 
-	log.Info().Str("path", hostKeyPath).Msg("uploading OpenSSH host key")
+	log.Info().Str("path", hostKeyPath).Msg("uploading ssh host key")
 	return uploadPrivateKey(targetHost, sshArgs, hostKeyPath, privPEM)
 }
 
@@ -688,11 +759,11 @@ func uploadInitrdKeys(cfg *Config, machine, targetHost string, sshArgs []string)
 			return err
 		}
 		if matches {
-			log.Info().Str("path", hostKeyPath).Msg("remote initrd host key already matches; skipping decrypt/upload")
+			log.Info().Str("path", hostKeyPath).Msg("remote initrd host key already matches, skipping decrypt/upload")
 			continue
 		}
 
-		log.Info().Str("path", hostKeyPath).Msg("remote initrd host key differs or is missing; decrypting local key")
+		log.Info().Str("path", hostKeyPath).Msg("remote initrd host key differs or is missing, decrypting local key")
 		privPEM, err := sops.DecryptBinary(localSecret)
 		if err != nil {
 			return errors.Wrapf(err, "decrypt initrd key %s", localSecret)
@@ -745,7 +816,7 @@ func uploadPrivateKey(targetHost string, sshArgs []string, hostKeyPath string, p
 	runArgs := append(append([]string{}, sshArgs...), targetHost, remoteCmd)
 	cmd := exec.Command("ssh", runArgs...)
 	cmd.Stdin = bytes.NewReader(privPEM)
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = processStderrWriter()
 	return cmd.Run()
 }
 
