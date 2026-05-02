@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"regexp"
 	"strings"
 
 	"git.tatikoma.dev/corpix/atlas/errors"
@@ -46,8 +47,20 @@ func nixSystem() string {
 
 const configKey = "deploy.config"
 
+var simpleNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
 func getConfig(ctx *cli.Context) *Config {
 	return ctx.App.Metadata[configKey].(*Config)
+}
+
+func requireSimpleName(kind, value string) (string, error) {
+	if value == "" {
+		return "", errors.Errorf("%s name is required", kind)
+	}
+	if !simpleNamePattern.MatchString(value) {
+		return "", errors.Errorf("invalid %s name %q: allowed characters are lowercase letters, digits, underscore, and hyphen", kind, value)
+	}
+	return value, nil
 }
 
 // requireFlake validates that the flake root contains flake.nix.

@@ -32,7 +32,11 @@ func secretCmd() *cli.Command {
 						return errors.New("usage: secret ensure <machine>")
 					}
 					cfg := getConfig(ctx)
-					return ensureSecrets(cfg, ctx.Args().Get(0))
+					machine, err := requireSimpleName("machine", ctx.Args().Get(0))
+					if err != nil {
+						return err
+					}
+					return ensureSecrets(cfg, machine)
 				},
 			},
 			{
@@ -56,7 +60,11 @@ func secretCmd() *cli.Command {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: secret list <machine> or secret list --all")
 					}
-					return listSecretFileKeys(secretsPath(cfg, ctx.Args().Get(0)), ctx.Args().Get(0))
+					machine, err := requireSimpleName("machine", ctx.Args().Get(0))
+					if err != nil {
+						return err
+					}
+					return listSecretFileKeys(secretsPath(cfg, machine), machine)
 				},
 			},
 			{
@@ -68,7 +76,10 @@ func secretCmd() *cli.Command {
 						return errors.New("usage: secret get <machine> <key>")
 					}
 					cfg := getConfig(ctx)
-					machine := ctx.Args().Get(0)
+					machine, err := requireSimpleName("machine", ctx.Args().Get(0))
+					if err != nil {
+						return err
+					}
 					key := ctx.Args().Get(1)
 					log.Debug().Str("machine", machine).Str("key", key).Msg("secret get")
 					path := secretsPath(cfg, machine)
@@ -92,7 +103,10 @@ func secretCmd() *cli.Command {
 						return errors.New("usage: secret set <machine> <key>")
 					}
 					cfg := getConfig(ctx)
-					machine := ctx.Args().Get(0)
+					machine, err := requireSimpleName("machine", ctx.Args().Get(0))
+					if err != nil {
+						return err
+					}
 					key := ctx.Args().Get(1)
 					log.Debug().Str("machine", machine).Str("key", key).Msg("secret set")
 
@@ -123,7 +137,10 @@ func secretCmd() *cli.Command {
 						return errors.New("usage: secret update <machine>")
 					}
 					cfg := getConfig(ctx)
-					machine := ctx.Args().Get(0)
+					machine, err := requireSimpleName("machine", ctx.Args().Get(0))
+					if err != nil {
+						return err
+					}
 					path := secretsPath(cfg, machine)
 					log.Info().Str("machine", machine).Str("file", path).Msg("updating secret keys")
 					if err := sops.UpdateKeys(cfg.SopsConf, path); err != nil {
@@ -157,7 +174,11 @@ func secretCmd() *cli.Command {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: secret verify <machine> or secret verify --all")
 					}
-					return verifySecretFile(cfg, secretsPath(cfg, ctx.Args().Get(0)), ctx.Bool("fix"))
+					machine, err := requireSimpleName("machine", ctx.Args().Get(0))
+					if err != nil {
+						return err
+					}
+					return verifySecretFile(cfg, secretsPath(cfg, machine), ctx.Bool("fix"))
 				},
 			},
 			{
@@ -173,7 +194,11 @@ func secretCmd() *cli.Command {
 								return errors.New("usage: secret shared ensure <group>")
 							}
 							cfg := getConfig(ctx)
-							return ensureSharedSecrets(cfg, ctx.Args().Get(0))
+							group, err := requireSimpleName("group", ctx.Args().Get(0))
+							if err != nil {
+								return err
+							}
+							return ensureSharedSecrets(cfg, group)
 						},
 					},
 					{
@@ -185,7 +210,11 @@ func secretCmd() *cli.Command {
 								return errors.New("usage: secret shared list <group>")
 							}
 							cfg := getConfig(ctx)
-							return listSecretFileKeys(sharedSecretsPath(cfg, ctx.Args().Get(0)), ctx.Args().Get(0))
+							group, err := requireSimpleName("group", ctx.Args().Get(0))
+							if err != nil {
+								return err
+							}
+							return listSecretFileKeys(sharedSecretsPath(cfg, group), group)
 						},
 					},
 					{
@@ -197,7 +226,10 @@ func secretCmd() *cli.Command {
 								return errors.New("usage: secret shared get <group> <key>")
 							}
 							cfg := getConfig(ctx)
-							group := ctx.Args().Get(0)
+							group, err := requireSimpleName("group", ctx.Args().Get(0))
+							if err != nil {
+								return err
+							}
 							key := ctx.Args().Get(1)
 							log.Debug().Str("group", group).Str("key", key).Msg("shared secret get")
 							path := sharedSecretsPath(cfg, group)
@@ -221,7 +253,10 @@ func secretCmd() *cli.Command {
 								return errors.New("usage: secret shared set <group> <key>")
 							}
 							cfg := getConfig(ctx)
-							group := ctx.Args().Get(0)
+							group, err := requireSimpleName("group", ctx.Args().Get(0))
+							if err != nil {
+								return err
+							}
 							key := ctx.Args().Get(1)
 							log.Debug().Str("group", group).Str("key", key).Msg("shared secret set")
 
@@ -252,7 +287,10 @@ func secretCmd() *cli.Command {
 								return errors.New("usage: secret shared update <group>")
 							}
 							cfg := getConfig(ctx)
-							group := ctx.Args().Get(0)
+							group, err := requireSimpleName("group", ctx.Args().Get(0))
+							if err != nil {
+								return err
+							}
 							path := sharedSecretsPath(cfg, group)
 							if _, err := sops.UpsertSharedRule(cfg.SopsConf, cfg.FlakeDir, cfg.SharedGroupsFile, group, sops.UpdateKeys); err != nil {
 								return errors.Wrapf(err, "sync shared keys for %s", group)
@@ -279,7 +317,11 @@ func secretCmd() *cli.Command {
 								return errors.New("usage: secret shared verify <group>")
 							}
 							cfg := getConfig(ctx)
-							return verifySecretFile(cfg, sharedSecretsPath(cfg, ctx.Args().Get(0)), ctx.Bool("fix"))
+							group, err := requireSimpleName("group", ctx.Args().Get(0))
+							if err != nil {
+								return err
+							}
+							return verifySecretFile(cfg, sharedSecretsPath(cfg, group), ctx.Bool("fix"))
 						},
 					},
 				},
