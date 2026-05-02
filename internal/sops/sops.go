@@ -245,6 +245,61 @@ func VerifyFile(filePath string) error {
 	return nil
 }
 
+// RepairFile decrypts a SOPS-encrypted file while ignoring a stale MAC,
+// reapplies the current creation rule from .sops.yaml, and writes back a fresh
+// encrypted file atomically.
+func RepairFile(confPath, filePath string) error {
+	log.Debug().Str("file", filePath).Msg("sops repair file")
+
+	cfg, err := config.LoadCreationRuleForFile(confPath, filePath, nil)
+	if err != nil {
+		return errors.Wrapf(err, "load sops creation rule for %s", filePath)
+	}
+
+	storesCfg := config.NewStoresConfig()
+	format := formats.FormatForPath(filePath)
+	store := common.StoreForFormat(format, storesCfg)
+
+	tree, err := common.LoadEncryptedFile(store, filePath)
+	if err != nil {
+		return errors.Wrapf(err, "sops load encrypted %s", filePath)
+	}
+
+	dataKey, err := common.DecryptTree(common.DecryptTreeOpts{
+		Tree:            tree,
+		KeyServices:     keyServices(),
+		DecryptionOrder: decryptionOrder(),
+		IgnoreMac:       true,
+		Cipher:          newCipher(),
+	})
+	if err != nil {
+		return errors.Wrapf(err, "sops decrypt tree ignoring mac %s", filePath)
+	}
+
+	tree.Metadata.KeyGroups = cfg.KeyGroups
+	tree.Metadata.ShamirThreshold = cfg.ShamirThreshold
+
+	errs := tree.Metadata.UpdateMasterKeysWithKeyServices(dataKey, keyServices())
+	if len(errs) > 0 {
+		return errors.Wrapf(errs[0], "sops update master keys for %s", filePath)
+	}
+
+	if err := common.EncryptTree(common.EncryptTreeOpts{
+		DataKey: dataKey,
+		Tree:    tree,
+		Cipher:  newCipher(),
+	}); err != nil {
+		return errors.Wrapf(err, "sops re-encrypt tree %s", filePath)
+	}
+
+	out, err := store.EmitEncryptedFile(*tree)
+	if err != nil {
+		return errors.Wrapf(err, "sops emit repaired file %s", filePath)
+	}
+
+	return writeAtomic(filePath, out, 0o600)
+}
+
 // SetYAML decrypts the file, sets key=value, and re-encrypts in-place.
 func SetYAML(filePath, key, value string) error {
 	log.Debug().Str("file", filePath).Str("key", key).Msg("sops set yaml key")
