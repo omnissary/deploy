@@ -316,7 +316,7 @@ func ensureHostKey(cfg *Config, machine string) error {
 	if _, err := os.Stat(pubPath); err == nil {
 		log.Debug().Str("machine", machine).Msg("host key already exists")
 	} else {
-		log.Info().Str("machine", machine).Msg("generating host SSH key pair")
+		log.Info().Str("machine", machine).Msg("generating host ssh key pair")
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return errors.Wrapf(err, "create dir %s", dir)
 		}
@@ -389,7 +389,7 @@ func ensureInitrdKey(cfg *Config, machine string) error {
 	case !privExists && pubExists:
 		return errors.Errorf("missing encrypted private key for %s initrd SSH key: %s", machine, privPath)
 	case !privExists:
-		log.Info().Str("machine", machine).Msg("generating initrd SSH key pair")
+		log.Info().Str("machine", machine).Msg("generating initrd ssh key pair")
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return errors.Wrapf(err, "create dir %s", dir)
 		}

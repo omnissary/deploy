@@ -411,7 +411,7 @@ func machineDeployCmd() *cli.Command {
 			}
 
 			sshArgs := []string{"-F", sshConfigPath}
-			log.Info().Str("machine", machine).Str("host", targetHost).Msg("opening SSH control connection")
+			log.Info().Str("machine", machine).Str("host", targetHost).Msg("opening ssh control connection")
 
 			masterArgs := append(append([]string{}, sshArgs...),
 				"-M",
@@ -461,7 +461,7 @@ func machineDeployCmd() *cli.Command {
 			if !ready {
 				return errors.Errorf("timed out waiting for ssh control master to %s", targetHost)
 			}
-			log.Info().Str("machine", machine).Str("host", targetHost).Msg("SSH control connection ready")
+			log.Info().Str("machine", machine).Str("host", targetHost).Msg("ssh control connection ready")
 
 			// Upload the managed ssh host key before activation so sops-nix
 			// derives the expected age identity from /etc/ssh/ssh_host_ed25519_key.
@@ -471,7 +471,7 @@ func machineDeployCmd() *cli.Command {
 			}
 
 			// Upload initrd host keys.
-			log.Info().Str("machine", machine).Msg("checking initrd SSH host keys")
+			log.Info().Str("machine", machine).Msg("checking initrd ssh host keys")
 			if err := uploadInitrdKeys(cfg, machine, sshAlias, sshArgs); err != nil {
 				return err
 			}
@@ -609,7 +609,7 @@ func prepareExtraSSHKeys(cfg *Config, machine, extraDir string) error {
 		return errors.Wrap(err, "create extra etc/ssh")
 	}
 
-	log.Debug().Str("machine", machine).Msg("decrypting host SSH key for extra files")
+	log.Debug().Str("machine", machine).Msg("decrypting host ssh key for extra files")
 	privPEM, err := sops.DecryptBinary(srcPriv)
 	if err != nil {
 		return errors.Wrapf(err, "decrypt host private key for %s", machine)
