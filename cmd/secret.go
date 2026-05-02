@@ -110,12 +110,12 @@ func secretCmd() *cli.Command {
 			},
 			{
 				Name:      "verify",
-				Usage:     "verify secret integrity/decryption for one machine or all machine secrets",
+				Usage:     "verify secret integrity/decryption for one machine or all encrypted files",
 				ArgsUsage: "[<machine>]",
 				Flags: []cli.Flag{
 					&cli.BoolFlag{
 						Name:  "all",
-						Usage: "verify all machine secret files under machines/*/secrets.yaml",
+						Usage: "verify all encrypted files managed by the repo",
 					},
 					&cli.BoolFlag{
 						Name:  "fix",
@@ -128,7 +128,7 @@ func secretCmd() *cli.Command {
 						if ctx.NArg() != 0 {
 							return errors.New("usage: secret verify --all")
 						}
-						return verifyAllMachineSecrets(cfg, ctx.Bool("fix"))
+						return verifyAllSecrets(cfg, ctx.Bool("fix"))
 					}
 					if ctx.NArg() < 1 {
 						return errors.New("usage: secret verify <machine> or secret verify --all")
@@ -325,14 +325,11 @@ func verifySecretFile(cfg *Config, path string, fix bool) error {
 	return nil
 }
 
-func verifyAllMachineSecrets(cfg *Config, fix bool) error {
-	paths, err := filepath.Glob(filepath.Join(cfg.FlakeDir, "machines", "*", "secrets.yaml"))
-	if err != nil {
-		return errors.Wrap(err, "glob machine secrets")
-	}
+func verifyAllSecrets(cfg *Config, fix bool) error {
+	paths := sops.ListEncryptedFiles(cfg.FlakeDir)
 	sort.Strings(paths)
 	if len(paths) == 0 {
-		log.Info().Msg("no machine secrets found")
+		log.Info().Msg("no encrypted files found")
 		return nil
 	}
 

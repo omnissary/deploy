@@ -420,6 +420,12 @@ func machineFiles(machine string) []string {
 	}
 }
 
+// ListEncryptedFiles returns every encrypted file currently managed in the
+// flake. The result is unsorted and may include paths that no longer exist.
+func ListEncryptedFiles(flakeDir string) []string {
+	return allEncryptedFiles(flakeDir)
+}
+
 func allEncryptedFiles(flakeDir string) []string {
 	var files []string
 	adminGlob, _ := filepath.Glob(filepath.Join(flakeDir, "vars", "admin", "*"))
