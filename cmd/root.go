@@ -9,6 +9,7 @@ import (
 
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
+	"git.tatikoma.dev/corpix/deploy/internal/nix"
 	"github.com/urfave/cli/v2"
 )
 
@@ -158,6 +159,8 @@ func New() *cli.App {
 			} else {
 				log.SetLevel(log.InfoLevel)
 			}
+
+			nix.SetWriters(processStdoutWriter(), processStderrWriter())
 
 			flake := ctx.Path("flake")
 			abs, err := filepath.Abs(flake)

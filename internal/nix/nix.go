@@ -3,6 +3,7 @@ package nix
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -11,10 +12,25 @@ import (
 	"git.tatikoma.dev/corpix/atlas/log"
 )
 
+var (
+	stdoutWriter io.Writer = os.Stdout
+	stderrWriter io.Writer = os.Stderr
+)
+
+// SetWriters configures where nix subprocess output is streamed.
+func SetWriters(stdout, stderr io.Writer) {
+	if stdout != nil {
+		stdoutWriter = stdout
+	}
+	if stderr != nil {
+		stderrWriter = stderr
+	}
+}
+
 func run(args ...string) ([]byte, error) {
 	log.Debug().Strs("args", args).Msg("nix")
 	cmd := exec.Command("nix", args...)
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = stderrWriter
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, errors.Wrapf(err, "nix %s", strings.Join(args, " "))
@@ -47,15 +63,14 @@ func Eval(flake, attr string) (json.RawMessage, error) {
 // Copy copies a store path to an SSH remote using NIX_SSHOPTS.
 func Copy(storePath, sshURL string, sshOpts []string) error {
 	log.Debug().Str("path", storePath).Str("to", sshURL).Msg("nix copy")
-	cmd := exec.Command("nix", "copy", "--to", sshURL, storePath)
+	cmd := exec.Command("nix", "copy", "--log-format", "bar-with-logs", "--to", sshURL, storePath)
 	if len(sshOpts) > 0 {
 		cmd.Env = append(cmd.Environ(), "NIX_SSHOPTS="+strings.Join(sshOpts, " "))
 	}
-	cmd.Stdout = nil
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stderrWriter
 	if err := cmd.Run(); err != nil {
-		return errors.Wrapf(err, "nix copy to %s: %s", sshURL, stderr.String())
+		return errors.Wrapf(err, "nix copy to %s", sshURL)
 	}
 	return nil
 }
@@ -80,6 +95,7 @@ func PathInfo(storePath string) ([]string, error) {
 func WhyDepends(path, dep string) error {
 	log.Debug().Str("path", path).Str("dep", dep).Msg("nix why-depends")
 	cmd := exec.Command("nix", "why-depends", path, dep)
+	cmd.Stdout = stdoutWriter
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
