@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
@@ -206,8 +207,18 @@ func ensureSessionKey(cfg *Config, name string) error {
 		if err != nil {
 			return errors.Wrapf(err, "read session public key")
 		}
+		public := strings.TrimSpace(string(pub))
 		log.Info().Str("name", name).Msg("session key already exists")
-		fmt.Printf("public: %s\n", string(pub))
+		fmt.Printf("public: %s\n", public)
+		changed, err := sops.AddSessionKey(cfg.SopsConf, cfg.FlakeDir, public, sops.UpdateKeys)
+		if err != nil {
+			return errors.Wrap(err, "sync session key into .sops.yaml")
+		}
+		if changed {
+			log.Info().Str("name", name).Msg("session key synced into .sops.yaml and secrets re-encrypted")
+		} else {
+			log.Info().Str("name", name).Msg("session key already present in .sops.yaml")
+		}
 		return nil
 	}
 

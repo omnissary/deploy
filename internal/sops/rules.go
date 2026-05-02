@@ -338,9 +338,9 @@ func ListSessionKeys(confPath string) ([]string, error) {
 	return nil, nil
 }
 
-// AddSessionKey adds an age public key to creation rules eligible for session
-// access (generic machine rule + rules that already have age recipients).
-// Admin-only rules (vars/admin, initrd-ssh, openssh) are skipped.
+// AddSessionKey adds an age public key to every creation rule that has an
+// explicit key group. This makes a session key transparently usable anywhere
+// an admin key already has access.
 // Returns true if anything changed.
 func AddSessionKey(confPath, flakeDir, ageKey string, updateFn func(string, string) error) (bool, error) {
 	cfg, err := loadSopsYAML(confPath)
@@ -401,21 +401,11 @@ func RemoveSessionKey(confPath, flakeDir, ageKey string, updateFn func(string, s
 }
 
 // sessionEligible reports whether a rule should receive session age keys.
+// Session keys are treated as admin-equivalent and therefore propagate to any
+// rule with explicit recipients.
 func sessionEligible(r creationRule) bool {
-	if r.PathRegex == adminVarsRegex {
-		return false
-	}
-	if r.PathRegex == genericSharedRegex {
-		return true
-	}
-	if strings.Contains(r.PathRegex, "initrd-ssh") || strings.Contains(r.PathRegex, "openssh") {
-		return false
-	}
-	if r.PathRegex == genericMachineRegex {
-		return true
-	}
 	for _, kg := range r.KeyGroups {
-		if len(kg.Age) > 0 {
+		if len(kg.PGP) > 0 || len(kg.Age) > 0 {
 			return true
 		}
 	}
