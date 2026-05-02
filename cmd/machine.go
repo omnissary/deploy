@@ -323,22 +323,39 @@ func machineDeployCmd() *cli.Command {
 
 			log.Info().Str("machine", machine).Str("host", targetHost).Msg("deploying")
 
-			sshArgs := cfg.SSHArgs()
-			sshTarget := cfg.SSHTarget(targetHost)
-
-			// Establish SSH ControlMaster.
+			// Establish a per-deploy SSH config and ControlMaster so plain ssh
+			// invocations and nix copy resolve the exact same target alias.
 			controlDir, err := os.MkdirTemp("", "deploy-ctl-*")
 			if err != nil {
 				return errors.Wrap(err, "create control tmpdir")
 			}
 			defer func() { _ = os.RemoveAll(controlDir) }()
 			controlPath := filepath.Join(controlDir, "ctl")
+			sshConfigPath := filepath.Join(controlDir, "ssh_config")
+			sshAlias := "deploy-target"
+
+			sshConfig := strings.Join([]string{
+				"Host " + sshAlias,
+				"  HostName " + targetHost,
+				"  User " + cfg.SSHUser,
+				"  UserKnownHostsFile " + cfg.KnownHosts,
+				"  GlobalKnownHostsFile /dev/null",
+				"  StrictHostKeyChecking accept-new",
+				"  UpdateHostKeys no",
+				"  ControlMaster auto",
+				"  ControlPath " + controlPath,
+				"  ControlPersist 10m",
+				"",
+			}, "\n")
+			if err := os.WriteFile(sshConfigPath, []byte(sshConfig), 0o600); err != nil {
+				return errors.Wrap(err, "write ssh config")
+			}
+
+			sshArgs := []string{"-F", sshConfigPath}
 
 			masterArgs := append(append([]string{}, sshArgs...),
-				"-o", "ControlMaster=yes",
-				"-o", "ControlPath="+controlPath,
-				"-o", "ControlPersist=no",
-				"-N", sshTarget,
+				"-M",
+				"-N", sshAlias,
 			)
 			master := exec.Command("ssh", masterArgs...)
 			master.Stderr = os.Stderr
@@ -347,8 +364,7 @@ func machineDeployCmd() *cli.Command {
 			}
 			defer func() {
 				checkArgs := append(append([]string{}, sshArgs...),
-					"-o", "ControlPath="+controlPath,
-					"-O", "exit", sshTarget,
+					"-O", "exit", sshAlias,
 				)
 				_ = exec.Command("ssh", checkArgs...).Run()
 				_ = master.Wait()
@@ -356,8 +372,7 @@ func machineDeployCmd() *cli.Command {
 
 			// Wait until ControlMaster is ready.
 			checkArgs := append(append([]string{}, sshArgs...),
-				"-o", "ControlPath="+controlPath,
-				"-O", "check", sshTarget,
+				"-O", "check", sshAlias,
 			)
 			log.Debug().Str("host", targetHost).Msg("waiting for ssh control master")
 			ready := false
@@ -376,14 +391,8 @@ func machineDeployCmd() *cli.Command {
 			}
 			log.Debug().Str("host", targetHost).Msg("ssh control master ready")
 
-			muxArgs := append(append([]string{}, sshArgs...),
-				"-o", "ControlMaster=auto",
-				"-o", "ControlPath="+controlPath,
-				"-o", "ControlPersist=no",
-			)
-
 			// Upload initrd host keys.
-			if err := uploadInitrdKeys(cfg, machine, targetHost, muxArgs); err != nil {
+			if err := uploadInitrdKeys(cfg, machine, sshAlias, sshArgs); err != nil {
 				return err
 			}
 
@@ -395,13 +404,8 @@ func machineDeployCmd() *cli.Command {
 			}
 
 			log.Info().Str("machine", machine).Str("host", targetHost).Msg("copying closure")
-			sshURL := "ssh://" + sshTarget
-			nixSSHOpts := append(append([]string{}, sshArgs...),
-				"-o", "ControlMaster=auto",
-				"-o", "ControlPath="+controlPath,
-				"-o", "ControlPersist=no",
-			)
-			if err := nix.Copy(toplevel, sshURL, nixSSHOpts); err != nil {
+			sshURL := "ssh://" + sshAlias
+			if err := nix.Copy(toplevel, sshURL, sshArgs); err != nil {
 				return errors.Wrapf(err, "copy closure to %s", targetHost)
 			}
 
@@ -412,7 +416,7 @@ func machineDeployCmd() *cli.Command {
 					"/nix/var/nix/profiles/system/bin/switch-to-configuration switch",
 				toplevel,
 			)
-			runArgs := append(append([]string{}, muxArgs...), sshTarget, switchCmd)
+			runArgs := append(append([]string{}, sshArgs...), sshAlias, switchCmd)
 			switchExec := exec.Command("ssh", runArgs...)
 			switchExec.Stdout = os.Stdout
 			switchExec.Stderr = os.Stderr
