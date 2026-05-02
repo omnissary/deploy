@@ -17,6 +17,8 @@ const (
 	genericMachineRegex = `machines/[^/]+/secrets\.yaml$`
 	genericSharedRegex  = `vars/shared/[^/]+/secrets\.yaml$`
 	adminVarsRegex      = `vars/admin/.+$`
+	genericInitrdRegex  = `vars/per-machine/[^/]+/initrd-ssh/id_ed25519$`
+	genericHostKeyRegex = `vars/per-machine/[^/]+/openssh/ssh_host_ed25519_key$`
 )
 
 type sopsYAML struct {
@@ -122,13 +124,24 @@ func UpsertMachineRules(confPath, machine, ageKey string, updateFn func(confPath
 		cfg.CreationRules[machineIdx] = machineRule
 		changed = true
 	}
+	if idx := indexOfRule(cfg.CreationRules, machineRegex); idx != -1 && idx > indexOfRule(cfg.CreationRules, genericMachineRegex) {
+		cfg.CreationRules = moveRuleBefore(cfg.CreationRules, machineRegex, genericMachineRegex)
+		changed = true
+	}
 	switch {
 	case varsIdx == -1:
-		cfg.CreationRules = prependBefore(cfg.CreationRules, varsRule, genericMachineRegex)
+		cfg.CreationRules = prependBeforeAny(cfg.CreationRules, varsRule, genericInitrdRegex, genericHostKeyRegex, genericMachineRegex)
 		changed = true
 	case !rulesEqual(cfg.CreationRules[varsIdx], varsRule):
 		cfg.CreationRules[varsIdx] = varsRule
 		changed = true
+	}
+	if idx := indexOfRule(cfg.CreationRules, varsRegex); idx != -1 {
+		anchor := firstRuleIndex(cfg.CreationRules, genericInitrdRegex, genericHostKeyRegex, genericMachineRegex)
+		if anchor != -1 && idx > anchor {
+			cfg.CreationRules = moveRuleBeforeAny(cfg.CreationRules, varsRegex, genericInitrdRegex, genericHostKeyRegex, genericMachineRegex)
+			changed = true
+		}
 	}
 
 	if changed {
@@ -547,13 +560,11 @@ func updateAllFiles(confPath, flakeDir string, updateFn func(string, string) err
 }
 
 func prependBefore(rules []creationRule, r creationRule, beforeRegex string) []creationRule {
-	idx := -1
-	for i, existing := range rules {
-		if existing.PathRegex == beforeRegex {
-			idx = i
-			break
-		}
-	}
+	return prependBeforeAny(rules, r, beforeRegex)
+}
+
+func prependBeforeAny(rules []creationRule, r creationRule, beforeRegexes ...string) []creationRule {
+	idx := firstRuleIndex(rules, beforeRegexes...)
 	if idx == -1 {
 		return append([]creationRule{r}, rules...)
 	}
@@ -562,6 +573,41 @@ func prependBefore(rules []creationRule, r creationRule, beforeRegex string) []c
 	out = append(out, r)
 	out = append(out, rules[idx:]...)
 	return out
+}
+
+func moveRuleBefore(rules []creationRule, pathRegex, beforeRegex string) []creationRule {
+	return moveRuleBeforeAny(rules, pathRegex, beforeRegex)
+}
+
+func moveRuleBeforeAny(rules []creationRule, pathRegex string, beforeRegexes ...string) []creationRule {
+	src := indexOfRule(rules, pathRegex)
+	if src == -1 {
+		return rules
+	}
+	rule := rules[src]
+	remaining := append(append([]creationRule{}, rules[:src]...), rules[src+1:]...)
+	return prependBeforeAny(remaining, rule, beforeRegexes...)
+}
+
+func firstRuleIndex(rules []creationRule, regexes ...string) int {
+	idx := -1
+	for _, regex := range regexes {
+		for i, existing := range rules {
+			if existing.PathRegex == regex && (idx == -1 || i < idx) {
+				idx = i
+			}
+		}
+	}
+	return idx
+}
+
+func indexOfRule(rules []creationRule, regex string) int {
+	for i, rule := range rules {
+		if rule.PathRegex == regex {
+			return i
+		}
+	}
+	return -1
 }
 
 func rulesEqual(a, b creationRule) bool {
