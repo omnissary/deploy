@@ -192,6 +192,37 @@ func UpsertAllSharedRules(confPath, flakeDir, groupsPath string, updateFn func(c
 	return changed, nil
 }
 
+// UpsertMachineSharedRules ensures every shared secret rule that includes the
+// given machine matches vars/shared/groups.yaml. Returns true if .sops.yaml was
+// modified.
+func UpsertMachineSharedRules(confPath, flakeDir, groupsPath, machine string, updateFn func(confPath, filePath string) error) (bool, error) {
+	groups, err := loadSharedGroups(groupsPath)
+	if err != nil {
+		return false, err
+	}
+	if len(groups) == 0 {
+		return false, nil
+	}
+
+	names := make([]string, 0, len(groups))
+	for name, group := range groups {
+		if containsStr(group.Machines, machine) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+
+	changed := false
+	for _, name := range names {
+		groupChanged, err := UpsertSharedRule(confPath, flakeDir, groupsPath, name, updateFn)
+		if err != nil {
+			return changed, err
+		}
+		changed = changed || groupChanged
+	}
+	return changed, nil
+}
+
 // UpsertSharedRule ensures a shared secret creation rule exists for one group.
 // The rule inherits the generic shared-secret key group and appends every
 // machine age recipient listed in vars/shared/groups.yaml.

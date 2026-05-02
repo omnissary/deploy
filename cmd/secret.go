@@ -335,6 +335,13 @@ func secretsPath(cfg *Config, machine string) string {
 }
 
 func ensureSecrets(cfg *Config, machine string) error {
+	if err := ensureHostKey(cfg, machine); err != nil {
+		return errors.Wrapf(err, "ensure host key for %s", machine)
+	}
+	if _, err := sops.UpsertMachineSharedRules(cfg.SopsConf, cfg.FlakeDir, cfg.SharedGroupsFile, machine, sops.UpdateKeys); err != nil {
+		return errors.Wrapf(err, "sync shared sops rules for %s", machine)
+	}
+
 	path := secretsPath(cfg, machine)
 	if _, err := os.Stat(path); err == nil {
 		log.Debug().Str("machine", machine).Msg("secrets.yaml already exists")
