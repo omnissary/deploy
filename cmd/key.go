@@ -32,7 +32,11 @@ func keyCmd() *cli.Command {
 						return errors.New("usage: key host <machine>")
 					}
 					cfg := getConfig(ctx)
-					return ensureHostKey(cfg, ctx.Args().Get(0))
+					machine, err := requireMachine(cfg, ctx.Args().Get(0))
+					if err != nil {
+						return err
+					}
+					return ensureHostKey(cfg, machine)
 				},
 			},
 			{
@@ -44,7 +48,11 @@ func keyCmd() *cli.Command {
 						return errors.New("usage: key initrd <machine>")
 					}
 					cfg := getConfig(ctx)
-					return ensureInitrdKey(cfg, ctx.Args().Get(0))
+					machine, err := requireMachine(cfg, ctx.Args().Get(0))
+					if err != nil {
+						return err
+					}
+					return ensureInitrdKey(cfg, machine)
 				},
 			},
 			{
@@ -56,7 +64,10 @@ func keyCmd() *cli.Command {
 						return errors.New("usage: key ensure <machine>")
 					}
 					cfg := getConfig(ctx)
-					machine := ctx.Args().Get(0)
+					machine, err := requireMachine(cfg, ctx.Args().Get(0))
+					if err != nil {
+						return err
+					}
 					if err := ensureHostKey(cfg, machine); err != nil {
 						return err
 					}

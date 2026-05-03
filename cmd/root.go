@@ -73,6 +73,35 @@ func requireFlake(cfg *Config) error {
 	return nil
 }
 
+func machineConfigPath(cfg *Config, machine string) string {
+	return filepath.Join(cfg.FlakeDir, "machines", machine, "default.nix")
+}
+
+func requireMachineConfigExists(cfg *Config, machine string) error {
+	path := machineConfigPath(cfg, machine)
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return errors.Errorf("machine %q does not exist: missing %s", machine, path)
+		}
+		return errors.Wrapf(err, "stat machine config %s", path)
+	}
+	return nil
+}
+
+func requireMachine(cfg *Config, value string) (string, error) {
+	machine, err := requireSimpleName("machine", value)
+	if err != nil {
+		return "", err
+	}
+	if err := requireFlake(cfg); err != nil {
+		return "", err
+	}
+	if err := requireMachineConfigExists(cfg, machine); err != nil {
+		return "", err
+	}
+	return machine, nil
+}
+
 // SSHArgs returns the common SSH option flags derived from Config.
 func (c *Config) SSHArgs() []string {
 	return []string{

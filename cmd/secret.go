@@ -32,7 +32,7 @@ func secretCmd() *cli.Command {
 						return errors.New("usage: secret ensure <machine>")
 					}
 					cfg := getConfig(ctx)
-					machine, err := requireSimpleName("machine", ctx.Args().Get(0))
+					machine, err := requireMachine(cfg, ctx.Args().Get(0))
 					if err != nil {
 						return err
 					}
@@ -60,7 +60,7 @@ func secretCmd() *cli.Command {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: secret list <machine> or secret list --all")
 					}
-					machine, err := requireSimpleName("machine", ctx.Args().Get(0))
+					machine, err := requireMachine(cfg, ctx.Args().Get(0))
 					if err != nil {
 						return err
 					}
@@ -76,7 +76,7 @@ func secretCmd() *cli.Command {
 						return errors.New("usage: secret get <machine> <key>")
 					}
 					cfg := getConfig(ctx)
-					machine, err := requireSimpleName("machine", ctx.Args().Get(0))
+					machine, err := requireMachine(cfg, ctx.Args().Get(0))
 					if err != nil {
 						return err
 					}
@@ -103,7 +103,7 @@ func secretCmd() *cli.Command {
 						return errors.New("usage: secret set <machine> <key>")
 					}
 					cfg := getConfig(ctx)
-					machine, err := requireSimpleName("machine", ctx.Args().Get(0))
+					machine, err := requireMachine(cfg, ctx.Args().Get(0))
 					if err != nil {
 						return err
 					}
@@ -137,7 +137,7 @@ func secretCmd() *cli.Command {
 						return errors.New("usage: secret update <machine>")
 					}
 					cfg := getConfig(ctx)
-					machine, err := requireSimpleName("machine", ctx.Args().Get(0))
+					machine, err := requireMachine(cfg, ctx.Args().Get(0))
 					if err != nil {
 						return err
 					}
@@ -174,7 +174,7 @@ func secretCmd() *cli.Command {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: secret verify <machine> or secret verify --all")
 					}
-					machine, err := requireSimpleName("machine", ctx.Args().Get(0))
+					machine, err := requireMachine(cfg, ctx.Args().Get(0))
 					if err != nil {
 						return err
 					}

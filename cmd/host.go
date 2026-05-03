@@ -24,7 +24,10 @@ func hostCmd() *cli.Command {
 						return errors.New("usage: host get <machine>")
 					}
 					cfg := getConfig(ctx)
-					machine := ctx.Args().Get(0)
+					machine, err := requireMachine(cfg, ctx.Args().Get(0))
+					if err != nil {
+						return err
+					}
 					log.Debug().Str("machine", machine).Msg("host get")
 					host, err := hosts.Get(cfg.HostsFile, machine)
 					if err != nil {
@@ -43,7 +46,10 @@ func hostCmd() *cli.Command {
 						return errors.New("usage: host set <machine> <addr>")
 					}
 					cfg := getConfig(ctx)
-					machine := ctx.Args().Get(0)
+					machine, err := requireMachine(cfg, ctx.Args().Get(0))
+					if err != nil {
+						return err
+					}
 					addr := ctx.Args().Get(1)
 					log.Info().Str("machine", machine).Str("addr", addr).Msg("registering host")
 					if err := hosts.Set(cfg.HostsFile, machine, addr); err != nil {

@@ -129,7 +129,10 @@ func machineInitCmd() *cli.Command {
 				return errors.New("usage: machine init <machine> <host>")
 			}
 			cfg := getConfig(ctx)
-			machine := ctx.Args().Get(0)
+			machine, err := requireMachine(cfg, ctx.Args().Get(0))
+			if err != nil {
+				return err
+			}
 			host := ctx.Args().Get(1)
 			port := ctx.Int("port")
 			phases := ctx.String("phases")
@@ -138,7 +141,6 @@ func machineInitCmd() *cli.Command {
 			if kexecTarball == "" {
 				flavor := ctx.String("kexec-flavor")
 				log.Info().Str("flavor", flavor).Msg("no --kexec provided, building from images flake")
-				var err error
 				kexecTarball, err = buildKexecTarball(cfg.ImagesFlake, cfg.System, flavor)
 				if err != nil {
 					return errors.Wrap(err, "auto-build kexec tarball")
@@ -234,7 +236,10 @@ func machineBuildCmd() *cli.Command {
 				return errors.New("usage: machine build <machine>")
 			}
 			cfg := getConfig(ctx)
-			machine := ctx.Args().Get(0)
+			machine, err := requireMachine(cfg, ctx.Args().Get(0))
+			if err != nil {
+				return err
+			}
 
 			if err := ensureHostKey(cfg, machine); err != nil {
 				return err
@@ -264,7 +269,10 @@ func machineEvalCmd() *cli.Command {
 				return errors.New("usage: machine eval <machine> <attr>")
 			}
 			cfg := getConfig(ctx)
-			machine := ctx.Args().Get(0)
+			machine, err := requireMachine(cfg, ctx.Args().Get(0))
+			if err != nil {
+				return err
+			}
 			attr := ctx.Args().Get(1)
 			fullAttr := cfg.MachineAttr(machine, "config."+attr)
 			log.Debug().Str("machine", machine).Str("attr", fullAttr).Msg("eval")
@@ -288,7 +296,10 @@ func machineAuditCmd() *cli.Command {
 				return errors.New("usage: machine audit <machine>")
 			}
 			cfg := getConfig(ctx)
-			machine := ctx.Args().Get(0)
+			machine, err := requireMachine(cfg, ctx.Args().Get(0))
+			if err != nil {
+				return err
+			}
 
 			if err := ensureHostKey(cfg, machine); err != nil {
 				return err
@@ -352,7 +363,10 @@ func machineDeployCmd() *cli.Command {
 				return errors.New("usage: machine deploy <machine>")
 			}
 			cfg := getConfig(ctx)
-			machine := ctx.Args().Get(0)
+			machine, err := requireMachine(cfg, ctx.Args().Get(0))
+			if err != nil {
+				return err
+			}
 			hostOverride := ctx.String("host")
 
 			if err := ensureHostKey(cfg, machine); err != nil {
@@ -520,7 +534,10 @@ func machineSSHCmd() *cli.Command {
 				return errors.New("usage: machine ssh <machine>")
 			}
 			cfg := getConfig(ctx)
-			machine := ctx.Args().Get(0)
+			machine, err := requireMachine(cfg, ctx.Args().Get(0))
+			if err != nil {
+				return err
+			}
 
 			host, err := hosts.Get(cfg.HostsFile, machine)
 			if err != nil {
@@ -561,7 +578,10 @@ func machineUnlockZFSCmd() *cli.Command {
 				return errors.New("usage: machine unlock-zfs <machine>")
 			}
 			cfg := getConfig(ctx)
-			machine := ctx.Args().Get(0)
+			machine, err := requireMachine(cfg, ctx.Args().Get(0))
+			if err != nil {
+				return err
+			}
 			initrdPort := ctx.Int("initrd-port")
 
 			host, err := hosts.Get(cfg.HostsFile, machine)
