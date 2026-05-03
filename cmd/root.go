@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"git.tatikoma.dev/corpix/atlas/errors"
@@ -44,6 +45,14 @@ func nixSystem() string {
 	default:
 		return runtime.GOARCH + "-linux"
 	}
+}
+
+func defaultNixBuildCores() int {
+	cores := runtime.NumCPU() / 2
+	if cores < 1 {
+		return 1
+	}
+	return cores
 }
 
 const configKey = "deploy.config"
@@ -175,6 +184,18 @@ func New() *cli.App {
 				Value:   nixSystem(),
 				EnvVars: []string{"DEPLOY_SYSTEM"},
 			},
+			&cli.IntFlag{
+				Name:    "nix-build-cores",
+				Usage:   "number of build cores to expose to nix builds",
+				Value:   defaultNixBuildCores(),
+				EnvVars: []string{"DEPLOY_NIX_BUILD_CORES"},
+			},
+			&cli.IntFlag{
+				Name:    "nix-max-jobs",
+				Usage:   "maximum number of concurrent nix build jobs",
+				Value:   1,
+				EnvVars: []string{"DEPLOY_NIX_MAX_JOBS"},
+			},
 			&cli.BoolFlag{
 				Name:    "debug",
 				Aliases: []string{"d"},
@@ -190,6 +211,10 @@ func New() *cli.App {
 			}
 
 			nix.SetWriters(processStdoutWriter(), processStderrWriter())
+			nix.SetConfig(
+				strconv.Itoa(ctx.Int("nix-build-cores")),
+				strconv.Itoa(ctx.Int("nix-max-jobs")),
+			)
 
 			flake := ctx.Path("flake")
 			abs, err := filepath.Abs(flake)
