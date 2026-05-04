@@ -24,7 +24,11 @@ import (
 const (
 	processStdoutPrefix = "\x1b[1;37m┃\x1b[0m "
 	processStderrPrefix = "\x1b[1;31m┃\x1b[0m "
+	sshControlMasterReadyTimeout = 30 * time.Second
+	sshControlMasterStopTimeout  = 2 * time.Second
 )
+
+var errSSHControlMasterExitTimeout = errors.New("timed out waiting for ssh control master exit")
 
 type linePrefixWriter struct {
 	dst         io.Writer
@@ -433,6 +437,7 @@ func machineDeployCmd() *cli.Command {
 			)
 			master := exec.Command("ssh", masterArgs...)
 			master.Stderr = processStderrWriter()
+			master.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 			masterErrCh := make(chan error, 1)
 			if err := master.Start(); err != nil {
 				return errors.Wrap(err, "start ssh control master")
@@ -441,39 +446,14 @@ func machineDeployCmd() *cli.Command {
 				masterErrCh <- master.Wait()
 			}()
 			defer func() {
-				checkArgs := append(append([]string{}, sshArgs...),
-					"-O", "exit", sshAlias,
-				)
-				_ = exec.Command("ssh", checkArgs...).Run()
-				select {
-				case <-masterErrCh:
-				default:
+				if err := stopSSHControlMaster(master, masterErrCh, sshArgs, sshAlias); err != nil {
+					log.Warn().Err(err).Str("host", targetHost).Msg("failed to stop ssh control master cleanly")
 				}
 			}()
 
-			// Wait until ControlMaster is ready.
-			checkArgs := append(append([]string{}, sshArgs...),
-				"-O", "check", sshAlias,
-			)
 			log.Debug().Str("host", targetHost).Msg("waiting for ssh control master")
-			ready := false
-			for i := 0; i < 100; i++ {
-				if exec.Command("ssh", checkArgs...).Run() == nil {
-					ready = true
-					break
-				}
-				select {
-				case err := <-masterErrCh:
-					if err != nil {
-						return errors.Wrap(err, "ssh control master exited")
-					}
-					return errors.New("ssh control master exited unexpectedly")
-				default:
-				}
-				time.Sleep(100 * time.Millisecond)
-			}
-			if !ready {
-				return errors.Errorf("timed out waiting for ssh control master to %s", targetHost)
+			if err := waitForSSHControlMaster(masterErrCh, sshArgs, sshAlias, targetHost); err != nil {
+				return err
 			}
 			log.Info().Str("machine", machine).Str("host", targetHost).Msg("ssh control connection ready")
 
@@ -645,6 +625,98 @@ func prepareExtraSSHKeys(cfg *Config, machine, extraDir string) error {
 	if err := os.WriteFile(filepath.Join(dstDir, "ssh_host_ed25519_key.pub"), pubBytes, 0o644); err != nil {
 		return errors.Wrap(err, "write host public key to extra")
 	}
+	return nil
+}
+
+func waitForSSHControlMaster(masterErrCh <-chan error, sshArgs []string, sshAlias, targetHost string) error {
+	checkArgs := append(append([]string{}, sshArgs...),
+		"-O", "check", sshAlias,
+	)
+	deadline := time.Now().Add(sshControlMasterReadyTimeout)
+
+	for time.Now().Before(deadline) {
+		if exec.Command("ssh", checkArgs...).Run() == nil {
+			return nil
+		}
+
+		select {
+		case err := <-masterErrCh:
+			if err != nil {
+				return errors.Wrap(err, "ssh control master exited")
+			}
+			return errors.New("ssh control master exited unexpectedly")
+		default:
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return errors.Errorf("timed out waiting for ssh control master to %s after %s", targetHost, sshControlMasterReadyTimeout)
+}
+
+func stopSSHControlMaster(master *exec.Cmd, masterErrCh <-chan error, sshArgs []string, sshAlias string) error {
+	if master == nil || master.Process == nil {
+		return nil
+	}
+
+	exitArgs := append(append([]string{}, sshArgs...),
+		"-O", "exit", sshAlias,
+	)
+	if err := exec.Command("ssh", exitArgs...).Run(); err == nil {
+		return waitForSSHControlMasterExit(masterErrCh, sshControlMasterStopTimeout)
+	}
+
+	if err := terminateSSHControlMaster(master.Process.Pid, masterErrCh, syscall.SIGTERM); err != nil {
+		return err
+	}
+
+	if err := waitForSSHControlMasterExit(masterErrCh, sshControlMasterStopTimeout); err == nil {
+		return nil
+	} else if !errors.Is(err, errSSHControlMasterExitTimeout) {
+		return err
+	}
+
+	if err := terminateSSHControlMaster(master.Process.Pid, masterErrCh, syscall.SIGKILL); err != nil {
+		return err
+	}
+
+	return waitForSSHControlMasterExit(masterErrCh, sshControlMasterStopTimeout)
+}
+
+func waitForSSHControlMasterExit(masterErrCh <-chan error, timeout time.Duration) error {
+	select {
+	case err := <-masterErrCh:
+		if err == nil {
+			return nil
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return nil
+		}
+		return errors.Wrap(err, "wait for ssh control master exit")
+	case <-time.After(timeout):
+		return errSSHControlMasterExitTimeout
+	}
+}
+
+func terminateSSHControlMaster(pid int, masterErrCh <-chan error, signal syscall.Signal) error {
+	select {
+	case err := <-masterErrCh:
+		if err == nil {
+			return nil
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return nil
+		}
+		return errors.Wrap(err, "ssh control master exited before signal")
+	default:
+	}
+
+	if err := syscall.Kill(-pid, signal); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return errors.Wrapf(err, "signal ssh control master with %s", signal)
+	}
+
 	return nil
 }
 
