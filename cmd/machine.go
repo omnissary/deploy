@@ -22,13 +22,56 @@ import (
 )
 
 const (
-	processStdoutPrefix = "\x1b[1;37m┃\x1b[0m "
-	processStderrPrefix = "\x1b[1;31m┃\x1b[0m "
+	stdoutBarColor = "\x1b[1;37m"
+	stderrBarColor = "\x1b[1;31m"
+
 	sshControlMasterReadyTimeout = 30 * time.Second
 	sshControlMasterStopTimeout  = 2 * time.Second
 )
 
+var labelColors = []string{
+	"\x1b[32m",   // green
+	"\x1b[33m",   // yellow
+	"\x1b[34m",   // blue
+	"\x1b[35m",   // magenta
+	"\x1b[36m",   // cyan
+	"\x1b[91m",   // bright red
+	"\x1b[92m",   // bright green
+	"\x1b[93m",   // bright yellow
+	"\x1b[94m",   // bright blue
+	"\x1b[95m",   // bright magenta
+	"\x1b[96m",   // bright cyan
+	"\x1b[38;5;208m", // orange
+	"\x1b[38;5;172m", // dark orange
+	"\x1b[38;5;141m", // light purple
+	"\x1b[38;5;73m",  // steel blue
+	"\x1b[38;5;156m", // light green
+}
+
 var errSSHControlMasterExitTimeout = errors.New("timed out waiting for ssh control master exit")
+
+// writerConfig builds prefixed output writers for a single deploy.
+// Label is empty for single-machine deploys (no prefix added).
+type writerConfig struct {
+	Label      string
+	LabelColor string
+}
+
+func (c writerConfig) buildPrefix(barColor string) string {
+	bar := barColor + "┃\x1b[0m "
+	if c.Label == "" {
+		return bar
+	}
+	return c.LabelColor + "[" + c.Label + "]\x1b[0m " + bar
+}
+
+func (c writerConfig) stdout() io.Writer {
+	return newLinePrefixWriter(os.Stdout, c.buildPrefix(stdoutBarColor))
+}
+
+func (c writerConfig) stderr() io.Writer {
+	return newLinePrefixWriter(os.Stderr, c.buildPrefix(stderrBarColor))
+}
 
 type linePrefixWriter struct {
 	dst         io.Writer
@@ -73,14 +116,6 @@ func (w *linePrefixWriter) Write(p []byte) (int, error) {
 	}
 
 	return written, nil
-}
-
-func processStdoutWriter() io.Writer {
-	return newLinePrefixWriter(os.Stdout, processStdoutPrefix)
-}
-
-func processStderrWriter() io.Writer {
-	return newLinePrefixWriter(os.Stderr, processStderrPrefix)
 }
 
 func machineCmd() *cli.Command {
@@ -211,12 +246,13 @@ func machineInitCmd() *cli.Command {
 				cfg.SSHTarget(host),
 			)
 
+			wc := writerConfig{}
 			log.Info().Str("machine", machine).Str("host", host).Int("port", port).Msg("running NixOS Anywhere")
 			cmd := exec.Command("nixos-anywhere", args...)
 			cmd.Env = append(os.Environ(), "HOME="+cfg.FlakeDir)
 			cmd.Stdin = os.Stdin
-			cmd.Stdout = processStdoutWriter()
-			cmd.Stderr = processStderrWriter()
+			cmd.Stdout = wc.stdout()
+			cmd.Stderr = wc.stderr()
 			if err := cmd.Run(); err != nil {
 				return errors.Wrap(err, "nixos-anywhere")
 			}
@@ -353,155 +389,220 @@ func machineAuditCmd() *cli.Command {
 func machineDeployCmd() *cli.Command {
 	return &cli.Command{
 		Name:      "deploy",
-		Usage:     "deploy the NixOS configuration to a running machine",
-		ArgsUsage: "<machine>",
+		Usage:     "deploy the NixOS configuration to one or more running machines",
+		ArgsUsage: "<machine...>",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "host",
 				Aliases: []string{"H"},
-				Usage:   "override the target host address",
+				Usage:   "override the target host address (single machine only)",
+			},
+			&cli.IntFlag{
+				Name:  "parallel",
+				Usage: "maximum number of concurrent deploys",
+				Value: 3,
 			},
 		},
 		Action: func(ctx *cli.Context) error {
 			if ctx.NArg() < 1 {
-				return errors.New("usage: machine deploy <machine>")
+				return errors.New("usage: machine deploy <machine...>")
 			}
 			cfg := getConfig(ctx)
-			machine, err := requireMachine(cfg, ctx.Args().Get(0))
-			if err != nil {
-				return err
-			}
 			hostOverride := ctx.String("host")
+			parallelism := ctx.Int("parallel")
 
-			if err := ensureHostKey(cfg, machine); err != nil {
-				return err
-			}
-			if err := ensureInitrdKey(cfg, machine); err != nil {
-				return err
+			machineNames := ctx.Args().Slice()
+
+			if hostOverride != "" && len(machineNames) > 1 {
+				return errors.New("--host can only be used when deploying a single machine")
 			}
 
-			// Resolve host.
-			var targetHost string
-			if hostOverride != "" {
-				targetHost = hostOverride
-				if err := hosts.Set(cfg.HostsFile, machine, targetHost); err != nil {
-					return errors.Wrapf(err, "register host for %s", machine)
-				}
-			} else {
-				h, err := hosts.Get(cfg.HostsFile, machine)
+			// Validate all machines up front before starting any deploy.
+			machines := make([]string, len(machineNames))
+			for i, name := range machineNames {
+				m, err := requireMachine(cfg, name)
 				if err != nil {
-					return errors.Wrapf(err, "get host for %s", machine)
+					return err
 				}
-				if h == "" {
-					return errors.Errorf("no host registered for %s; pass --host or run machine init first", machine)
+				machines[i] = m
+			}
+
+			// Resolve and register hosts up front.
+			hostFor := make(map[string]string, len(machines))
+			for _, machine := range machines {
+				if hostOverride != "" {
+					if err := hosts.Set(cfg.HostsFile, machine, hostOverride); err != nil {
+						return errors.Wrapf(err, "register host for %s", machine)
+					}
+					hostFor[machine] = hostOverride
+				} else {
+					h, err := hosts.Get(cfg.HostsFile, machine)
+					if err != nil {
+						return errors.Wrapf(err, "get host for %s", machine)
+					}
+					if h == "" {
+						return errors.Errorf("no host registered for %s; pass --host or run machine init first", machine)
+					}
+					hostFor[machine] = h
 				}
-				targetHost = h
 			}
 
-			log.Info().Str("machine", machine).Str("host", targetHost).Msg("starting deployment")
+			usePrefix := len(machines) > 1
 
-			// Establish a per-deploy SSH config and ControlMaster so plain ssh
-			// invocations and nix copy resolve the exact same target alias.
-			controlDir, err := os.MkdirTemp("", "deploy-ctl-*")
-			if err != nil {
-				return errors.Wrap(err, "create control tmpdir")
-			}
-			defer func() { _ = os.RemoveAll(controlDir) }()
-			controlPath := filepath.Join(controlDir, "ctl")
-			sshConfigPath := filepath.Join(controlDir, "ssh_config")
-			sshAlias := "deploy-target"
-
-			sshConfig := strings.Join([]string{
-				"Host " + sshAlias,
-				"  HostName " + targetHost,
-				"  User " + cfg.SSHUser,
-				"  UserKnownHostsFile " + cfg.KnownHosts,
-				"  GlobalKnownHostsFile /dev/null",
-				"  StrictHostKeyChecking accept-new",
-				"  UpdateHostKeys no",
-				"  ControlMaster auto",
-				"  ControlPath " + controlPath,
-				"  ControlPersist 10m",
-				"",
-			}, "\n")
-			if err := os.WriteFile(sshConfigPath, []byte(sshConfig), 0o600); err != nil {
-				return errors.Wrap(err, "write ssh config")
+			type deployResult struct {
+				machine string
+				err     error
 			}
 
-			sshArgs := []string{"-F", sshConfigPath}
-			log.Info().Str("machine", machine).Str("host", targetHost).Msg("opening ssh control connection")
+			sem := make(chan struct{}, parallelism)
+			results := make(chan deployResult, len(machines))
 
-			masterArgs := append(append([]string{}, sshArgs...),
-				"-M",
-				"-N", sshAlias,
-			)
-			master := exec.Command("ssh", masterArgs...)
-			master.Stderr = processStderrWriter()
-			master.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-			masterErrCh := make(chan error, 1)
-			if err := master.Start(); err != nil {
-				return errors.Wrap(err, "start ssh control master")
-			}
-			go func() {
-				masterErrCh <- master.Wait()
-			}()
-			defer func() {
-				if err := stopSSHControlMaster(master, masterErrCh, sshArgs, sshAlias); err != nil {
-					log.Warn().Err(err).Str("host", targetHost).Msg("failed to stop ssh control master cleanly")
+			for i, machine := range machines {
+				wc := writerConfig{}
+				if usePrefix {
+					wc = writerConfig{
+						Label:      machine,
+						LabelColor: labelColors[i%len(labelColors)],
+					}
 				}
-			}()
+				nixc := nix.NewClient(wc.stdout(), wc.stderr())
 
-			log.Debug().Str("host", targetHost).Msg("waiting for ssh control master")
-			if err := waitForSSHControlMaster(masterErrCh, sshArgs, sshAlias, targetHost); err != nil {
-				return err
-			}
-			log.Info().Str("machine", machine).Str("host", targetHost).Msg("ssh control connection ready")
-
-			// Upload the managed ssh host key before activation so sops-nix
-			// derives the expected age identity from /etc/ssh/ssh_host_ed25519_key.
-			log.Info().Str("machine", machine).Msg("checking ssh host key")
-			if err := uploadOpenSSHHostKey(cfg, machine, sshAlias, sshArgs); err != nil {
-				return err
+				sem <- struct{}{} // acquire slot; blocks when cap is reached
+				go func(machine, targetHost string, wc writerConfig, nixc *nix.Client) {
+					defer func() { <-sem }()
+					results <- deployResult{machine, deployMachine(cfg, machine, targetHost, nixc, wc)}
+				}(machine, hostFor[machine], wc, nixc)
 			}
 
-			// Upload initrd host keys.
-			log.Info().Str("machine", machine).Msg("checking initrd ssh host keys")
-			if err := uploadInitrdKeys(cfg, machine, sshAlias, sshArgs); err != nil {
-				return err
+			var errs []error
+			for range machines {
+				r := <-results
+				if r.err != nil {
+					errs = append(errs, errors.Wrapf(r.err, "deploy %s", r.machine))
+				}
 			}
-
-			// Build and copy toplevel.
-			log.Info().Str("machine", machine).Msg("building system toplevel")
-			toplevel, err := nix.Build(cfg.FlakeDir, cfg.MachineAttr(machine, "config.system.build.toplevel"))
-			if err != nil {
-				return errors.Wrapf(err, "build toplevel for %s", machine)
+			if len(errs) == 0 {
+				return nil
 			}
-
-			log.Info().Str("machine", machine).Str("host", targetHost).Msg("copying system closure")
-			sshURL := "ssh://" + sshAlias
-			if err := nix.Copy(toplevel, sshURL, sshArgs); err != nil {
-				return errors.Wrapf(err, "copy closure to %s", targetHost)
+			msgs := make([]string, len(errs))
+			for i, e := range errs {
+				msgs[i] = e.Error()
 			}
-
-			log.Info().Str("machine", machine).Msg("activating configuration")
-			switchCmd := fmt.Sprintf(
-				"nix-env --profile /nix/var/nix/profiles/system --set '%s' && "+
-					"/nix/var/nix/profiles/system/bin/switch-to-configuration boot && "+
-					"/nix/var/nix/profiles/system/bin/switch-to-configuration switch",
-				toplevel,
-			)
-			runArgs := append(append([]string{}, sshArgs...), sshAlias, switchCmd)
-			switchExec := exec.Command("ssh", runArgs...)
-			switchExec.Stdout = processStdoutWriter()
-			switchExec.Stderr = processStderrWriter()
-			if err := switchExec.Run(); err != nil {
-				return errors.Wrap(err, "switch-to-configuration")
-			}
-
-			log.Info().Str("machine", machine).Msg("deployment complete")
-			return nil
+			return errors.New(strings.Join(msgs, "\n"))
 		},
 	}
+}
+
+func deployMachine(cfg *Config, machine, targetHost string, nixc *nix.Client, wc writerConfig) error {
+	if err := ensureHostKey(cfg, machine); err != nil {
+		return err
+	}
+	if err := ensureInitrdKey(cfg, machine); err != nil {
+		return err
+	}
+
+	log.Info().Str("machine", machine).Str("host", targetHost).Msg("starting deployment")
+
+	// Establish a per-deploy SSH config and ControlMaster so plain ssh
+	// invocations and nix copy resolve the exact same target alias.
+	controlDir, err := os.MkdirTemp("", "deploy-ctl-*")
+	if err != nil {
+		return errors.Wrap(err, "create control tmpdir")
+	}
+	defer func() { _ = os.RemoveAll(controlDir) }()
+	controlPath := filepath.Join(controlDir, "ctl")
+	sshConfigPath := filepath.Join(controlDir, "ssh_config")
+	sshAlias := "deploy-target"
+
+	sshConfig := strings.Join([]string{
+		"Host " + sshAlias,
+		"  HostName " + targetHost,
+		"  User " + cfg.SSHUser,
+		"  UserKnownHostsFile " + cfg.KnownHosts,
+		"  GlobalKnownHostsFile /dev/null",
+		"  StrictHostKeyChecking accept-new",
+		"  UpdateHostKeys no",
+		"  ControlMaster auto",
+		"  ControlPath " + controlPath,
+		"  ControlPersist 10m",
+		"",
+	}, "\n")
+	if err := os.WriteFile(sshConfigPath, []byte(sshConfig), 0o600); err != nil {
+		return errors.Wrap(err, "write ssh config")
+	}
+
+	sshArgs := []string{"-F", sshConfigPath}
+	log.Info().Str("machine", machine).Str("host", targetHost).Msg("opening ssh control connection")
+
+	masterArgs := append(append([]string{}, sshArgs...),
+		"-M",
+		"-N", sshAlias,
+	)
+	master := exec.Command("ssh", masterArgs...)
+	master.Stderr = wc.stderr()
+	master.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	masterErrCh := make(chan error, 1)
+	if err := master.Start(); err != nil {
+		return errors.Wrap(err, "start ssh control master")
+	}
+	go func() {
+		masterErrCh <- master.Wait()
+	}()
+	defer func() {
+		if err := stopSSHControlMaster(master, masterErrCh, sshArgs, sshAlias); err != nil {
+			log.Warn().Err(err).Str("host", targetHost).Msg("failed to stop ssh control master cleanly")
+		}
+	}()
+
+	log.Debug().Str("host", targetHost).Msg("waiting for ssh control master")
+	if err := waitForSSHControlMaster(masterErrCh, sshArgs, sshAlias, targetHost); err != nil {
+		return err
+	}
+	log.Info().Str("machine", machine).Str("host", targetHost).Msg("ssh control connection ready")
+
+	// Upload the managed ssh host key before activation so sops-nix
+	// derives the expected age identity from /etc/ssh/ssh_host_ed25519_key.
+	log.Info().Str("machine", machine).Msg("checking ssh host key")
+	if err := uploadOpenSSHHostKey(cfg, machine, sshAlias, sshArgs, wc); err != nil {
+		return err
+	}
+
+	// Upload initrd host keys.
+	log.Info().Str("machine", machine).Msg("checking initrd ssh host keys")
+	if err := uploadInitrdKeys(cfg, machine, sshAlias, sshArgs, nixc, wc); err != nil {
+		return err
+	}
+
+	// Build and copy toplevel.
+	log.Info().Str("machine", machine).Msg("building system toplevel")
+	toplevel, err := nixc.Build(cfg.FlakeDir, cfg.MachineAttr(machine, "config.system.build.toplevel"))
+	if err != nil {
+		return errors.Wrapf(err, "build toplevel for %s", machine)
+	}
+
+	log.Info().Str("machine", machine).Str("host", targetHost).Msg("copying system closure")
+	sshURL := "ssh://" + sshAlias
+	if err := nixc.Copy(toplevel, sshURL, sshArgs); err != nil {
+		return errors.Wrapf(err, "copy closure to %s", targetHost)
+	}
+
+	log.Info().Str("machine", machine).Msg("activating configuration")
+	switchCmd := fmt.Sprintf(
+		"nix-env --profile /nix/var/nix/profiles/system --set '%s' && "+
+			"/nix/var/nix/profiles/system/bin/switch-to-configuration boot && "+
+			"/nix/var/nix/profiles/system/bin/switch-to-configuration switch",
+		toplevel,
+	)
+	runArgs := append(append([]string{}, sshArgs...), sshAlias, switchCmd)
+	switchExec := exec.Command("ssh", runArgs...)
+	switchExec.Stdout = wc.stdout()
+	switchExec.Stderr = wc.stderr()
+	if err := switchExec.Run(); err != nil {
+		return errors.Wrap(err, "switch-to-configuration")
+	}
+
+	log.Info().Str("machine", machine).Msg("deployment complete")
+	return nil
 }
 
 func machineSSHCmd() *cli.Command {
@@ -582,12 +683,13 @@ func machineUnlockZFSCmd() *cli.Command {
 				return errors.Wrapf(err, "decrypt zfs-root-key for %s", machine)
 			}
 
+			wc := writerConfig{}
 			remoteCmd := "mkdir -p /run/zfs-keys && cat > /run/zfs-keys/rpool.key.tmp && mv /run/zfs-keys/rpool.key.tmp /run/zfs-keys/rpool.key"
 			sshArgs := append(cfg.SSHArgs(), "-p", fmt.Sprintf("%d", initrdPort), cfg.SSHTarget(host), remoteCmd)
 			cmd := exec.Command("ssh", sshArgs...)
 			cmd.Stdin = strings.NewReader(key)
-			cmd.Stdout = processStdoutWriter()
-			cmd.Stderr = processStderrWriter()
+			cmd.Stdout = wc.stdout()
+			cmd.Stderr = wc.stderr()
 			if err := cmd.Run(); err != nil {
 				return errors.Wrap(err, "send zfs key via ssh")
 			}
@@ -778,21 +880,21 @@ func prepareInitrdKeys(cfg *Config, machine, extraDir string) error {
 	return nil
 }
 
-func uploadOpenSSHHostKey(cfg *Config, machine, targetHost string, sshArgs []string) error {
+func uploadOpenSSHHostKey(cfg *Config, machine, targetHost string, sshArgs []string, wc writerConfig) error {
 	const hostKeyPath = "/etc/ssh/ssh_host_ed25519_key"
 
 	localPublic := filepath.Join(cfg.FlakeDir, "vars", "per-machine", machine, "openssh", "ssh_host_ed25519_key.pub")
 	localSecret := filepath.Join(cfg.FlakeDir, "vars", "per-machine", machine, "openssh", "ssh_host_ed25519_key")
 	if !fileExists(localSecret) {
-			return errors.Errorf("missing ssh host key %s", localSecret)
+		return errors.Errorf("missing ssh host key %s", localSecret)
 	}
 	if !fileExists(localPublic) {
-			return errors.Errorf("missing ssh host public key %s", localPublic)
+		return errors.Errorf("missing ssh host public key %s", localPublic)
 	}
 
 	pubLine, err := os.ReadFile(localPublic)
 	if err != nil {
-			return errors.Wrapf(err, "read ssh host public key %s", localPublic)
+		return errors.Wrapf(err, "read ssh host public key %s", localPublic)
 	}
 
 	log.Info().Str("path", hostKeyPath).Msg("checking remote ssh host key")
@@ -801,22 +903,22 @@ func uploadOpenSSHHostKey(cfg *Config, machine, targetHost string, sshArgs []str
 		return err
 	}
 	if matches {
-			log.Info().Str("path", hostKeyPath).Msg("remote ssh host key already matches, skipping decrypt/upload")
+		log.Info().Str("path", hostKeyPath).Msg("remote ssh host key already matches, skipping decrypt/upload")
 		return nil
 	}
 
 	log.Info().Str("path", hostKeyPath).Msg("remote ssh host key differs or is missing, decrypting local key")
 	privPEM, err := sops.DecryptBinary(localSecret)
 	if err != nil {
-			return errors.Wrapf(err, "decrypt ssh host key %s", localSecret)
+		return errors.Wrapf(err, "decrypt ssh host key %s", localSecret)
 	}
 
 	log.Info().Str("path", hostKeyPath).Msg("uploading ssh host key")
-	return uploadPrivateKey(targetHost, sshArgs, hostKeyPath, privPEM)
+	return uploadPrivateKey(targetHost, sshArgs, hostKeyPath, privPEM, wc)
 }
 
-func uploadInitrdKeys(cfg *Config, machine, targetHost string, sshArgs []string) error {
-	raw, err := nix.Eval(cfg.FlakeDir, cfg.MachineAttr(machine, "config.boot.initrd.network.ssh.hostKeys"))
+func uploadInitrdKeys(cfg *Config, machine, targetHost string, sshArgs []string, nixc *nix.Client, wc writerConfig) error {
+	raw, err := nixc.Eval(cfg.FlakeDir, cfg.MachineAttr(machine, "config.boot.initrd.network.ssh.hostKeys"))
 	if err != nil {
 		return errors.Wrapf(err, "eval initrd host keys for %s", machine)
 	}
@@ -862,7 +964,7 @@ func uploadInitrdKeys(cfg *Config, machine, targetHost string, sshArgs []string)
 		}
 
 		log.Info().Str("path", hostKeyPath).Msg("uploading initrd host key")
-		if err := uploadPrivateKey(sshTarget, sshArgs, hostKeyPath, privPEM); err != nil {
+		if err := uploadPrivateKey(sshTarget, sshArgs, hostKeyPath, privPEM, wc); err != nil {
 			return errors.Wrapf(err, "upload initrd key %s", hostKeyPath)
 		}
 	}
@@ -900,7 +1002,7 @@ func remoteKeyMatches(targetHost string, sshArgs []string, hostKeyPath string, l
 	return false, nil
 }
 
-func uploadPrivateKey(targetHost string, sshArgs []string, hostKeyPath string, privPEM []byte) error {
+func uploadPrivateKey(targetHost string, sshArgs []string, hostKeyPath string, privPEM []byte, wc writerConfig) error {
 	remoteCmd := fmt.Sprintf(
 		"mkdir -p '%s' && umask 077 && cat > '%s.tmp' && mv '%s.tmp' '%s'",
 		filepath.Dir(hostKeyPath), hostKeyPath, hostKeyPath, hostKeyPath,
@@ -908,7 +1010,7 @@ func uploadPrivateKey(targetHost string, sshArgs []string, hostKeyPath string, p
 	runArgs := append(append([]string{}, sshArgs...), targetHost, remoteCmd)
 	cmd := exec.Command("ssh", runArgs...)
 	cmd.Stdin = bytes.NewReader(privPEM)
-	cmd.Stderr = processStderrWriter()
+	cmd.Stderr = wc.stderr()
 	return cmd.Run()
 }
 

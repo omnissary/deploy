@@ -35,21 +35,92 @@ func SetConfig(cores, jobs string) {
 	maxJobs = strings.TrimSpace(jobs)
 }
 
-func commandEnv() []string {
+func makeEnv(cores, jobs string) []string {
 	env := os.Environ()
 	var config []string
-	if buildCores != "" {
-		config = append(config, "cores = "+buildCores)
+	if cores != "" {
+		config = append(config, "cores = "+cores)
 	}
-	if maxJobs != "" {
-		config = append(config, "max-jobs = "+maxJobs)
+	if jobs != "" {
+		config = append(config, "max-jobs = "+jobs)
 	}
 	if len(config) == 0 {
 		return env
 	}
-	env = append(env, "NIX_CONFIG="+strings.Join(config, "\n"))
-	return env
+	return append(env, "NIX_CONFIG="+strings.Join(config, "\n"))
 }
+
+func commandEnv() []string {
+	return makeEnv(buildCores, maxJobs)
+}
+
+// Client runs nix subprocesses with its own output writers.
+// BuildCores and MaxJobs are read from the global SetConfig values at call time.
+type Client struct {
+	stdout io.Writer
+	stderr io.Writer
+}
+
+// NewClient returns a Client that writes subprocess output to the given writers.
+func NewClient(stdout, stderr io.Writer) *Client {
+	return &Client{stdout: stdout, stderr: stderr}
+}
+
+func (c *Client) commandEnv() []string {
+	return makeEnv(buildCores, maxJobs)
+}
+
+func (c *Client) run(args ...string) ([]byte, error) {
+	log.Debug().Strs("args", args).Msg("nix")
+	cmd := exec.Command("nix", args...)
+	cmd.Env = c.commandEnv()
+	cmd.Stderr = c.stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, errors.Wrapf(err, "nix %s", strings.Join(args, " "))
+	}
+	return out, nil
+}
+
+// Build builds a nix attribute and returns the store path.
+func (c *Client) Build(flake, attr string) (string, error) {
+	ref := flake + "#" + attr
+	log.Debug().Str("ref", ref).Msg("nix build")
+	out, err := c.run("build", "--no-link", "--print-out-paths", ref)
+	if err != nil {
+		return "", errors.Wrapf(err, "build %s", ref)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// Eval evaluates a nix attribute and returns raw JSON bytes.
+func (c *Client) Eval(flake, attr string) (json.RawMessage, error) {
+	ref := flake + "#" + attr
+	log.Debug().Str("ref", ref).Msg("nix eval")
+	out, err := c.run("eval", "--json", ref)
+	if err != nil {
+		return nil, errors.Wrapf(err, "eval %s", ref)
+	}
+	return json.RawMessage(bytes.TrimSpace(out)), nil
+}
+
+// Copy copies a store path to an SSH remote using NIX_SSHOPTS.
+func (c *Client) Copy(storePath, sshURL string, sshOpts []string) error {
+	log.Debug().Str("path", storePath).Str("to", sshURL).Msg("nix copy")
+	cmd := exec.Command("nix", "copy", "--log-format", "bar-with-logs", "--to", sshURL, storePath)
+	cmd.Env = c.commandEnv()
+	if len(sshOpts) > 0 {
+		cmd.Env = append(cmd.Env, "NIX_SSHOPTS="+strings.Join(sshOpts, " "))
+	}
+	cmd.Stdout = c.stdout
+	cmd.Stderr = c.stderr
+	if err := cmd.Run(); err != nil {
+		return errors.Wrapf(err, "nix copy to %s", sshURL)
+	}
+	return nil
+}
+
+// --- package-level functions backed by global writers ---
 
 func run(args ...string) ([]byte, error) {
 	log.Debug().Strs("args", args).Msg("nix")

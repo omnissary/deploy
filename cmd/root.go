@@ -210,7 +210,7 @@ func New() *cli.App {
 				log.SetLevel(log.InfoLevel)
 			}
 
-			nix.SetWriters(processStdoutWriter(), processStderrWriter())
+			nix.SetWriters(writerConfig{}.stdout(), writerConfig{}.stderr())
 			nix.SetConfig(
 				strconv.Itoa(ctx.Int("nix-build-cores")),
 				strconv.Itoa(ctx.Int("nix-max-jobs")),
