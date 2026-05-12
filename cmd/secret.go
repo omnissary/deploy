@@ -102,6 +102,29 @@ func secretCmd() *cli.Command {
 				},
 			},
 			{
+				Name:      "del",
+				Usage:     "delete a secret key",
+				ArgsUsage: "<machine> <key>",
+				Action: func(ctx *cli.Context) error {
+					if ctx.NArg() < 2 {
+						return errors.New("usage: secret del <machine> <key>")
+					}
+					cfg := getConfig(ctx)
+					machine, err := requireMachine(cfg, ctx.Args().Get(0))
+					if err != nil {
+						return err
+					}
+					key := ctx.Args().Get(1)
+					log.Debug().Str("machine", machine).Str("key", key).Msg("secret del")
+					path := secretsPath(cfg, machine)
+					if err := sops.DeleteYAML(path, key); err != nil {
+						return errors.Wrapf(err, "del secret %s/%s", machine, key)
+					}
+					log.Info().Str("machine", machine).Str("key", key).Msg("secret deleted")
+					return nil
+				},
+			},
+			{
 				Name:      "set",
 				Usage:     "read value from stdin and write it as a secret key",
 				ArgsUsage: "<machine> <key>",
@@ -247,6 +270,29 @@ func secretCmd() *cli.Command {
 							if err := writeSecretValue(os.Stdout, val); err != nil {
 								return errors.Wrap(err, "write shared secret")
 							}
+							return nil
+						},
+					},
+					{
+						Name:      "del",
+						Usage:     "delete a shared secret key",
+						ArgsUsage: "<group> <key>",
+						Action: func(ctx *cli.Context) error {
+							if ctx.NArg() < 2 {
+								return errors.New("usage: secret shared del <group> <key>")
+							}
+							cfg := getConfig(ctx)
+							group, err := requireSimpleName("group", ctx.Args().Get(0))
+							if err != nil {
+								return err
+							}
+							key := ctx.Args().Get(1)
+							log.Debug().Str("group", group).Str("key", key).Msg("shared secret del")
+							path := sharedSecretsPath(cfg, group)
+							if err := sops.DeleteYAML(path, key); err != nil {
+								return errors.Wrapf(err, "del shared secret %s/%s", group, key)
+							}
+							log.Info().Str("group", group).Str("key", key).Msg("shared secret deleted")
 							return nil
 						},
 					},

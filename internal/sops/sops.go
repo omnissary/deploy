@@ -342,6 +342,59 @@ func RepairFile(confPath, filePath string) error {
 	return writeAtomic(filePath, out, 0o600)
 }
 
+// DeleteYAML decrypts the file, removes the top-level key, and re-encrypts in-place.
+// Returns an error if the key does not exist.
+func DeleteYAML(filePath, key string) error {
+	log.Debug().Str("file", filePath).Str("key", key).Msg("sops delete yaml key")
+
+	storesCfg := config.NewStoresConfig()
+	store := common.StoreForFormat(formats.Yaml, storesCfg)
+
+	tree, err := common.LoadEncryptedFile(store, filePath)
+	if err != nil {
+		return errors.Wrapf(err, "sops load encrypted %s", filePath)
+	}
+
+	dataKey, err := common.DecryptTree(common.DecryptTreeOpts{
+		Tree:            tree,
+		KeyServices:     keyServices(),
+		DecryptionOrder: decryptionOrder(),
+		Cipher:          newCipher(),
+	})
+	if err != nil {
+		return errors.Wrapf(err, "sops decrypt tree %s", filePath)
+	}
+
+	branch := tree.Branches[0]
+	filtered := branch[:0:0]
+	found := false
+	for _, item := range branch {
+		if item.Key == key {
+			found = true
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	if !found {
+		return errors.Errorf("key %q not found in %s", key, filePath)
+	}
+	tree.Branches[0] = filtered
+
+	if err := common.EncryptTree(common.EncryptTreeOpts{
+		DataKey: dataKey,
+		Tree:    tree,
+		Cipher:  newCipher(),
+	}); err != nil {
+		return errors.Wrap(err, "sops re-encrypt tree")
+	}
+
+	out, err := store.EmitEncryptedFile(*tree)
+	if err != nil {
+		return errors.Wrap(err, "sops emit yaml")
+	}
+	return writeAtomic(filePath, out, 0o600)
+}
+
 // SetYAML decrypts the file, sets key=value, and re-encrypts in-place.
 func SetYAML(filePath, key, value string) error {
 	log.Debug().Str("file", filePath).Str("key", key).Msg("sops set yaml key")
