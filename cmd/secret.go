@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
@@ -14,6 +13,15 @@ import (
 
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
 )
+
+func secretValueFromInput(raw []byte) string {
+	return string(raw)
+}
+
+func writeSecretValue(w io.Writer, value string) error {
+	_, err := io.WriteString(w, value)
+	return err
+}
 
 func secretCmd() *cli.Command {
 	return &cli.Command{
@@ -87,9 +95,8 @@ func secretCmd() *cli.Command {
 					if err != nil {
 						return errors.Wrapf(err, "get secret %s/%s", machine, key)
 					}
-					fmt.Print(val)
-					if !strings.HasSuffix(val, "\n") {
-						fmt.Println()
+					if err := writeSecretValue(os.Stdout, val); err != nil {
+						return errors.Wrap(err, "write secret")
 					}
 					return nil
 				},
@@ -118,7 +125,7 @@ func secretCmd() *cli.Command {
 					if err != nil {
 						return errors.Wrap(err, "read stdin")
 					}
-					value := strings.TrimRight(string(raw), "\n")
+					value := secretValueFromInput(raw)
 
 					path := secretsPath(cfg, machine)
 					if err := sops.SetYAML(path, key, value); err != nil {
@@ -237,9 +244,8 @@ func secretCmd() *cli.Command {
 							if err != nil {
 								return errors.Wrapf(err, "get shared secret %s/%s", group, key)
 							}
-							fmt.Print(val)
-							if !strings.HasSuffix(val, "\n") {
-								fmt.Println()
+							if err := writeSecretValue(os.Stdout, val); err != nil {
+								return errors.Wrap(err, "write shared secret")
 							}
 							return nil
 						},
@@ -268,7 +274,7 @@ func secretCmd() *cli.Command {
 							if err != nil {
 								return errors.Wrap(err, "read stdin")
 							}
-							value := strings.TrimRight(string(raw), "\n")
+							value := secretValueFromInput(raw)
 
 							path := sharedSecretsPath(cfg, group)
 							if err := sops.SetYAML(path, key, value); err != nil {
