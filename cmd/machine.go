@@ -279,30 +279,96 @@ func machineBuildCmd() *cli.Command {
 	return &cli.Command{
 		Name:      "build",
 		Usage:     "build the NixOS system toplevel",
-		ArgsUsage: "<machine>",
+		ArgsUsage: "<machine...>",
+		Flags: []cli.Flag{
+			&cli.IntFlag{
+				Name:  "parallel",
+				Usage: "maximum number of concurrent builds",
+				Value: 3,
+			},
+		},
 		Action: func(ctx *cli.Context) error {
 			if ctx.NArg() < 1 {
-				return errors.New("usage: machine build <machine>")
+				return errors.New("usage: machine build <machine...>")
 			}
 			cfg := getConfig(ctx)
-			machine, err := requireMachine(cfg, ctx.Args().Get(0))
-			if err != nil {
-				return err
+			parallelism := ctx.Int("parallel")
+
+			machineNames := ctx.Args().Slice()
+			machines := make([]string, len(machineNames))
+			for i, name := range machineNames {
+				machine, err := requireMachine(cfg, name)
+				if err != nil {
+					return err
+				}
+				machines[i] = machine
 			}
 
-			if err := ensureMachineSecrets(cfg, machine); err != nil {
-				return err
+			usePrefix := len(machines) > 1
+
+			type buildResult struct {
+				machine string
+				path    string
+				err     error
 			}
 
-			log.Info().Str("machine", machine).Msg("building toplevel")
-			path, err := nix.Build(cfg.FlakeDir, cfg.MachineAttr(machine, "config.system.build.toplevel"))
-			if err != nil {
-				return errors.Wrapf(err, "build %s", machine)
+			sem := make(chan struct{}, parallelism)
+			results := make(chan buildResult, len(machines))
+
+			for i, machine := range machines {
+				wc := writerConfig{}
+				if usePrefix {
+					wc = writerConfig{
+						Label:      machine,
+						LabelColor: labelColors[i%len(labelColors)],
+					}
+				}
+				nixc := nix.NewClient(wc.stdout(), wc.stderr())
+
+				sem <- struct{}{}
+				go func(machine string, nixc *nix.Client) {
+					defer func() { <-sem }()
+					path, err := buildMachine(cfg, machine, nixc)
+					results <- buildResult{machine: machine, path: path, err: err}
+				}(machine, nixc)
 			}
-			fmt.Println(path)
+
+			var errs []error
+			paths := make([]string, 0, len(machines))
+			for range machines {
+				result := <-results
+				if result.err != nil {
+					errs = append(errs, errors.Wrapf(result.err, "build %s", result.machine))
+					continue
+				}
+				paths = append(paths, result.path)
+			}
+			if len(errs) > 0 {
+				msgs := make([]string, len(errs))
+				for i, err := range errs {
+					msgs[i] = err.Error()
+				}
+				return errors.New(strings.Join(msgs, "\n"))
+			}
+			for _, path := range paths {
+				fmt.Println(path)
+			}
 			return nil
 		},
 	}
+}
+
+func buildMachine(cfg *Config, machine string, nixc *nix.Client) (string, error) {
+	if err := ensureMachineSecrets(cfg, machine); err != nil {
+		return "", err
+	}
+
+	log.Info().Str("machine", machine).Msg("building toplevel")
+	path, err := nixc.Build(cfg.FlakeDir, cfg.MachineAttr(machine, "config.system.build.toplevel"))
+	if err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func machineEvalCmd() *cli.Command {
@@ -648,7 +714,7 @@ func machineSSHCmd() *cli.Command {
 
 func machineUnlockZFSCmd() *cli.Command {
 	return &cli.Command{
-		Name:      "unlock-zfs",
+		Name:      "unlock",
 		Usage:     "send the ZFS root key to the initrd SSH listener",
 		ArgsUsage: "<machine>",
 		Flags: []cli.Flag{
@@ -660,7 +726,7 @@ func machineUnlockZFSCmd() *cli.Command {
 		},
 		Action: func(ctx *cli.Context) error {
 			if ctx.NArg() < 1 {
-				return errors.New("usage: machine unlock-zfs <machine>")
+				return errors.New("usage: machine unlock <machine>")
 			}
 			cfg := getConfig(ctx)
 			machine, err := requireMachine(cfg, ctx.Args().Get(0))

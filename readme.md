@@ -63,17 +63,17 @@ NixOS machine lifecycle.
 
 ```
 deploy machine init <machine> <host>       # bootstrap via nixos-anywhere
-deploy machine build <machine>             # build system toplevel
+deploy machine build <machine...>          # build system toplevel
 deploy machine eval <machine> <attr>       # evaluate config attribute (JSON output)
 deploy machine audit <machine>             # check closure for source leaks
 deploy machine deploy <machine>            # deploy to running machine
 deploy machine ssh <machine>               # open interactive SSH session
-deploy machine unlock-zfs <machine>        # send ZFS root key to initrd listener
+deploy machine unlock <machine>            # send ZFS root key to initrd listener
 ```
 
 `init` flags: `--port` (default `22`), `--phases` (default `kexec,disko,install,reboot`),
 `--kexec-flavor` (default `zfs`), `--kexec` (explicit tarball path, skips auto-build).  
-`unlock-zfs` flag: `--initrd-port` (default `2222`).
+`unlock` flag: `--initrd-port` (default `2222`).
 
 ### kexec
 
