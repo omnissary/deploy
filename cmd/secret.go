@@ -193,24 +193,14 @@ func secretCmd() *cli.Command {
 				ArgsUsage: "[<name>]",
 				Flags: []cli.Flag{
 					&cli.BoolFlag{
-						Name:  "all",
-						Usage: "verify all encrypted files managed by the repo",
-					},
-					&cli.BoolFlag{
 						Name:  "fix",
 						Usage: "attempt to repair a broken secret file by re-encrypting it with the current .sops.yaml recipients",
 					},
 				},
 				Action: func(ctx *cli.Context) error {
 					cfg := getConfig(ctx)
-					if ctx.Bool("all") {
-						if ctx.NArg() != 0 {
-							return errors.New("usage: secret verify --all")
-						}
-						return verifyAllSecrets(cfg, ctx.Bool("fix"))
-					}
 					if ctx.NArg() < 1 {
-						return errors.New("usage: secret verify <name> or secret verify --all")
+						return verifyAllSecrets(cfg, ctx.Bool("fix"))
 					}
 					name := ctx.Args().Get(0)
 					path, err := resolveSecretPath(cfg, name)
