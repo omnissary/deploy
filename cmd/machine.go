@@ -192,19 +192,7 @@ func machineInitCmd() *cli.Command {
 
 			log.Info().Str("machine", machine).Str("host", host).Int("port", port).Msg("initialising machine")
 
-			if err := ensureHostKey(cfg, machine); err != nil {
-				return err
-			}
-			if err := ensureInitrdKey(cfg, machine); err != nil {
-				return err
-			}
-			if err := ensureSecrets(cfg, machine); err != nil {
-				return err
-			}
-			if err := enrollInSharedSecrets(cfg, machine); err != nil {
-				return err
-			}
-			if err := ensureZFSKey(cfg, machine); err != nil {
+			if err := ensureMachineSecrets(cfg, machine); err != nil {
 				return err
 			}
 
@@ -302,10 +290,7 @@ func machineBuildCmd() *cli.Command {
 				return err
 			}
 
-			if err := ensureHostKey(cfg, machine); err != nil {
-				return err
-			}
-			if err := ensureInitrdKey(cfg, machine); err != nil {
+			if err := ensureMachineSecrets(cfg, machine); err != nil {
 				return err
 			}
 
@@ -334,6 +319,10 @@ func machineEvalCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			if err := ensureMachineSecrets(cfg, machine); err != nil {
+				return err
+			}
+
 			attr := ctx.Args().Get(1)
 			fullAttr := cfg.MachineAttr(machine, "config."+attr)
 			log.Debug().Str("machine", machine).Str("attr", fullAttr).Msg("eval")
@@ -362,10 +351,7 @@ func machineAuditCmd() *cli.Command {
 				return err
 			}
 
-			if err := ensureHostKey(cfg, machine); err != nil {
-				return err
-			}
-			if err := ensureInitrdKey(cfg, machine); err != nil {
+			if err := ensureMachineSecrets(cfg, machine); err != nil {
 				return err
 			}
 
@@ -515,10 +501,7 @@ func machineDeployCmd() *cli.Command {
 }
 
 func deployMachine(cfg *Config, machine, targetHost string, nixc *nix.Client, wc writerConfig) error {
-	if err := ensureHostKey(cfg, machine); err != nil {
-		return err
-	}
-	if err := ensureInitrdKey(cfg, machine); err != nil {
+	if err := ensureMachineSecrets(cfg, machine); err != nil {
 		return err
 	}
 
@@ -684,6 +667,10 @@ func machineUnlockZFSCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			if err := ensureMachineSecrets(cfg, machine); err != nil {
+				return err
+			}
+
 			initrdPort := ctx.Int("initrd-port")
 
 			host, err := hosts.Get(cfg.HostsFile, machine)
@@ -912,6 +899,24 @@ func decryptZFSKeys(cfg *Config, machine string) (map[string]string, error) {
 		result[remotePath] = f.Name()
 	}
 	return result, nil
+}
+
+// ensureMachineSecrets idempotently provisions every key file and secrets file
+// needed to build or deploy a machine. Safe to call before any machine command.
+func ensureMachineSecrets(cfg *Config, machine string) error {
+	if err := ensureHostKey(cfg, machine); err != nil {
+		return err
+	}
+	if err := ensureInitrdKey(cfg, machine); err != nil {
+		return err
+	}
+	if err := ensureSecrets(cfg, machine); err != nil {
+		return err
+	}
+	if err := enrollInSharedSecrets(cfg, machine); err != nil {
+		return err
+	}
+	return ensureZFSKey(cfg, machine)
 }
 
 // ensureZFSKey generates and stores a ZFS root key for every encrypted pool
