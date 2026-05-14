@@ -41,6 +41,10 @@
             paths = [ unwrapped ];
             nativeBuildInputs = [ pkgs.makeWrapper ];
             postBuild = ''
+              mkdir -p $out/share/fish/vendor_completions.d
+              ${unwrapped}/bin/deploy fish-completion \
+                > $out/share/fish/vendor_completions.d/deploy.fish
+
               wrapProgram $out/bin/deploy \
                 --prefix PATH : ${
                   pkgs.lib.makeBinPath [

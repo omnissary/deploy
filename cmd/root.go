@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -253,6 +254,20 @@ func New() *cli.App {
 			secretCmd(),
 			machineCmd(),
 			kexecCmd(),
+			{
+				Name:   "fish-completion",
+				Usage:  "print fish shell completion script",
+				Hidden: true,
+				Action: func(ctx *cli.Context) error {
+					ctx.App.Setup()
+					s, err := ctx.App.ToFishCompletion()
+					if err != nil {
+						return err
+					}
+					_, err = fmt.Fprint(ctx.App.Writer, s)
+					return err
+				},
+			},
 		},
 		ExitErrHandler: func(ctx *cli.Context, err error) {
 			if err != nil {
