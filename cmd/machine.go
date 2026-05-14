@@ -304,6 +304,12 @@ func machineBuildCmd() *cli.Command {
 				machines[i] = machine
 			}
 
+			for _, machine := range machines {
+				if err := ensureMachineSecrets(cfg, machine); err != nil {
+					return errors.Wrapf(err, "prepare %s", machine)
+				}
+			}
+
 			usePrefix := len(machines) > 1
 
 			type buildResult struct {
@@ -359,10 +365,6 @@ func machineBuildCmd() *cli.Command {
 }
 
 func buildMachine(cfg *Config, machine string, nixc *nix.Client) (string, error) {
-	if err := ensureMachineSecrets(cfg, machine); err != nil {
-		return "", err
-	}
-
 	log.Info().Str("machine", machine).Msg("building toplevel")
 	path, err := nixc.Build(cfg.FlakeDir, cfg.MachineAttr(machine, "config.system.build.toplevel"))
 	if err != nil {
@@ -500,6 +502,12 @@ func machineDeployCmd() *cli.Command {
 				machines[i] = m
 			}
 
+			for _, machine := range machines {
+				if err := ensureMachineSecrets(cfg, machine); err != nil {
+					return errors.Wrapf(err, "prepare %s", machine)
+				}
+			}
+
 			// Resolve and register hosts up front.
 			hostFor := make(map[string]string, len(machines))
 			for _, machine := range machines {
@@ -567,10 +575,6 @@ func machineDeployCmd() *cli.Command {
 }
 
 func deployMachine(cfg *Config, machine, targetHost string, nixc *nix.Client, wc writerConfig) error {
-	if err := ensureMachineSecrets(cfg, machine); err != nil {
-		return err
-	}
-
 	log.Info().Str("machine", machine).Str("host", targetHost).Msg("starting deployment")
 
 	// Establish a per-deploy SSH config and ControlMaster so plain ssh
