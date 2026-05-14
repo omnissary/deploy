@@ -3,7 +3,6 @@ package nix
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -16,8 +15,8 @@ import (
 var (
 	stdoutWriter io.Writer = os.Stdout
 	stderrWriter io.Writer = os.Stderr
-	buildCores  string
-	maxJobs     string
+	buildCores   string
+	maxJobs      string
 )
 
 // SetWriters configures where nix subprocess output is streamed.
@@ -90,53 +89,22 @@ func (c *Client) runStdin(stdin io.Reader, args ...string) ([]byte, error) {
 
 // Build builds a nix attribute and returns the store path.
 func (c *Client) Build(flake, attr string) (string, error) {
-	ref := flake + "#" + attr
-	log.Debug().Str("ref", ref).Msg("nix build")
-	out, err := c.run("build", "--no-link", "--print-out-paths", ref)
-	if err != nil {
-		return "", errors.Wrapf(err, "build %s", ref)
-	}
-	return strings.TrimSpace(string(out)), nil
+	return Build(flake, attr)
 }
 
 // Eval evaluates a nix attribute and returns raw JSON bytes.
 func (c *Client) Eval(flake, attr string) (json.RawMessage, error) {
-	ref := flake + "#" + attr
-	log.Debug().Str("ref", ref).Msg("nix eval")
-	out, err := c.run("eval", "--json", ref)
-	if err != nil {
-		return nil, errors.Wrapf(err, "eval %s", ref)
-	}
-	return json.RawMessage(bytes.TrimSpace(out)), nil
+	return Eval(flake, attr)
 }
 
 // EvalApply evaluates a nix attribute with an apply function and returns raw JSON bytes.
-// The expression is piped via stdin using --file -, which supports multiline Nix and
-// implies --impure (required for builtins.getFlake with local paths).
 func (c *Client) EvalApply(flake, attr, apply string) (json.RawMessage, error) {
-	log.Debug().Str("flake", flake).Str("attr", attr).Str("apply", apply).Msg("nix eval")
-	expr := buildEvalExpr(flake, attr, apply)
-	out, err := c.runStdin(strings.NewReader(expr), "eval", "--json", "--file", "-")
-	if err != nil {
-		return nil, errors.Wrapf(err, "eval %s#%s", flake, attr)
-	}
-	return json.RawMessage(bytes.TrimSpace(out)), nil
+	return EvalApply(flake, attr, apply)
 }
 
 // Copy copies a store path to an SSH remote using NIX_SSHOPTS.
 func (c *Client) Copy(storePath, sshURL string, sshOpts []string) error {
-	log.Debug().Str("path", storePath).Str("to", sshURL).Msg("nix copy")
-	cmd := exec.Command("nix", "copy", "--log-format", "bar-with-logs", "--to", sshURL, storePath)
-	cmd.Env = c.commandEnv()
-	if len(sshOpts) > 0 {
-		cmd.Env = append(cmd.Env, "NIX_SSHOPTS="+strings.Join(sshOpts, " "))
-	}
-	cmd.Stdout = c.stdout
-	cmd.Stderr = c.stderr
-	if err := cmd.Run(); err != nil {
-		return errors.Wrapf(err, "nix copy to %s", sshURL)
-	}
-	return nil
+	return Copy(storePath, sshURL, sshOpts)
 }
 
 // --- package-level functions backed by global writers ---
@@ -181,28 +149,17 @@ func Eval(flake, attr string) (json.RawMessage, error) {
 }
 
 // EvalApply evaluates a nix attribute with an apply function and returns raw JSON bytes.
-// The expression is piped via stdin using --file -, which supports multiline Nix and
-// implies --impure (required for builtins.getFlake with local paths).
 func EvalApply(flake, attr, apply string) (json.RawMessage, error) {
-	log.Debug().Str("flake", flake).Str("attr", attr).Str("apply", apply).Msg("nix eval")
-	expr := buildEvalExpr(flake, attr, apply)
-	out, err := runStdin(strings.NewReader(expr), "eval", "--json", "--file", "-")
+	ref := flake + "#" + attr
+	log.Debug().
+		Str("flake", flake).Str("ref", ref).
+		Str("apply", apply).
+		Msg("nix eval")
+	out, err := run("eval", "--json", "--apply", apply, ref)
 	if err != nil {
 		return nil, errors.Wrapf(err, "eval %s#%s", flake, attr)
 	}
 	return json.RawMessage(bytes.TrimSpace(out)), nil
-}
-
-const evalExprTemplate = `
-let
-  _flake = builtins.getFlake "path:%s";
-  _value = _flake.%s;
-in
-  (%s) _value
-`
-
-func buildEvalExpr(flakeDir, attr, apply string) string {
-	return fmt.Sprintf(evalExprTemplate, flakeDir, attr, apply)
 }
 
 // Copy copies a store path to an SSH remote using NIX_SSHOPTS.
@@ -229,7 +186,7 @@ func PathInfo(storePath string) ([]string, error) {
 		return nil, errors.Wrapf(err, "path-info %s", storePath)
 	}
 	var paths []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		if line != "" {
 			paths = append(paths, line)
 		}

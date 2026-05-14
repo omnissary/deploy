@@ -34,17 +34,17 @@ const (
 )
 
 var labelColors = []string{
-	"\x1b[32m",   // green
-	"\x1b[33m",   // yellow
-	"\x1b[34m",   // blue
-	"\x1b[35m",   // magenta
-	"\x1b[36m",   // cyan
-	"\x1b[91m",   // bright red
-	"\x1b[92m",   // bright green
-	"\x1b[93m",   // bright yellow
-	"\x1b[94m",   // bright blue
-	"\x1b[95m",   // bright magenta
-	"\x1b[96m",   // bright cyan
+	"\x1b[32m",       // green
+	"\x1b[33m",       // yellow
+	"\x1b[34m",       // blue
+	"\x1b[35m",       // magenta
+	"\x1b[36m",       // cyan
+	"\x1b[91m",       // bright red
+	"\x1b[92m",       // bright green
+	"\x1b[93m",       // bright yellow
+	"\x1b[94m",       // bright blue
+	"\x1b[95m",       // bright magenta
+	"\x1b[96m",       // bright cyan
 	"\x1b[38;5;208m", // orange
 	"\x1b[38;5;172m", // dark orange
 	"\x1b[38;5;141m", // light purple
@@ -944,12 +944,10 @@ func ensureZFSKey(cfg *Config, machine string) error {
 // enrollInSharedSecrets adds the machine to any shared secret groups that its
 // NixOS config references via sops.secrets.*.sopsFile.
 func enrollInSharedSecrets(cfg *Config, machine string) error {
-	raw, err := nix.EvalApply(cfg.FlakeDir, cfg.MachineAttr(machine, "config"), `
-		cfg:
-		builtins.attrNames (builtins.listToAttrs (
-			builtins.map (s: { name = s.sopsFile; value = null; })
-			(builtins.attrValues cfg.sops.secrets)))
-	`)
+	raw, err := nix.EvalApply(
+		cfg.FlakeDir, cfg.MachineAttr(machine, "config"),
+		`cfg: with builtins; map (s: s.sopsFile) (attrValues cfg.sops.secrets)`,
+	)
 	if err != nil {
 		return errors.Wrapf(err, "eval sops secrets for %s", machine)
 	}
