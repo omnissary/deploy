@@ -30,7 +30,11 @@ func secretCmd() *cli.Command {
 		Name:  "secret",
 		Usage: "manage SOPS-encrypted secrets (per-machine and shared groups)",
 		Before: func(ctx *cli.Context) error {
-			return requireFlake(getConfig(ctx))
+			cfg := getConfig(ctx)
+			if err := requireFlake(cfg); err != nil {
+				return err
+			}
+			return requireAdminSOPSConfig(cfg)
 		},
 		Subcommands: []*cli.Command{
 			{

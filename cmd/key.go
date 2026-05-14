@@ -81,6 +81,13 @@ func keyCmd() *cli.Command {
 	}
 }
 
+func requireAdminSOPSConfig(cfg *Config) error {
+	if err := sops.RequireAdminPGPConfig(cfg.SopsConf); err != nil {
+		return errors.Wrap(err, "validate sops admin recipients")
+	}
+	return nil
+}
+
 func keyAdminCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "admin",
@@ -91,6 +98,9 @@ func keyAdminCmd() *cli.Command {
 				Usage: "print admin PGP fingerprints",
 				Action: func(ctx *cli.Context) error {
 					cfg := getConfig(ctx)
+					if err := requireAdminSOPSConfig(cfg); err != nil {
+						return err
+					}
 					keys, err := sops.ListAdminKeys(cfg.SopsConf)
 					if err != nil {
 						return err
@@ -110,6 +120,9 @@ func keyAdminCmd() *cli.Command {
 						return errors.New("usage: key admin add <fingerprint>")
 					}
 					cfg := getConfig(ctx)
+					if err := requireAdminSOPSConfig(cfg); err != nil {
+						return err
+					}
 					fingerprint := ctx.Args().Get(0)
 					changed, err := sops.AddAdminKey(cfg.SopsConf, cfg.FlakeDir, fingerprint, sops.UpdateKeys)
 					if err != nil {
@@ -132,6 +145,9 @@ func keyAdminCmd() *cli.Command {
 						return errors.New("usage: key admin remove <fingerprint>")
 					}
 					cfg := getConfig(ctx)
+					if err := requireAdminSOPSConfig(cfg); err != nil {
+						return err
+					}
 					fingerprint := ctx.Args().Get(0)
 					changed, err := sops.RemoveAdminKey(cfg.SopsConf, cfg.FlakeDir, fingerprint, sops.UpdateKeys)
 					if err != nil {
@@ -164,6 +180,9 @@ func keySessionCmd() *cli.Command {
 				Usage: "print session age public keys",
 				Action: func(ctx *cli.Context) error {
 					cfg := getConfig(ctx)
+					if err := requireAdminSOPSConfig(cfg); err != nil {
+						return err
+					}
 					keys, err := sops.ListSessionKeys(cfg.SopsConf)
 					if err != nil {
 						return err
@@ -210,6 +229,10 @@ func keySessionCmd() *cli.Command {
 }
 
 func ensureSessionKey(cfg *Config, name string) error {
+	if err := requireAdminSOPSConfig(cfg); err != nil {
+		return err
+	}
+
 	adminDir := filepath.Join(cfg.FlakeDir, "vars", "admin")
 	privPath := filepath.Join(adminDir, name+"-age-key")
 	pubPath := privPath + ".pub"
@@ -244,13 +267,6 @@ func ensureSessionKey(cfg *Config, name string) error {
 		return errors.Wrap(err, "generate session age key")
 	}
 
-	// Register the public key as a recipient in .sops.yaml BEFORE encrypting
-	// the private key — EncryptBinary needs a matching rule with at least one
-	// recipient, which the session key itself satisfies after this call.
-	if _, err := sops.AddSessionKey(cfg.SopsConf, cfg.FlakeDir, pair.Public, sops.UpdateKeys); err != nil {
-		return errors.Wrap(err, "add session key to .sops.yaml")
-	}
-
 	encrypted, err := sops.EncryptBinary(cfg.SopsConf, privPath, []byte(pair.Private))
 	if err != nil {
 		return errors.Wrap(err, "encrypt session age key")
@@ -263,8 +279,8 @@ func ensureSessionKey(cfg *Config, name string) error {
 	}
 	log.Info().Str("name", name).Str("public", pair.Public).Msg("session key written")
 
-	if err := appendToAgeKeysFile(pair.Private); err != nil {
-		log.Warn().Err(err).Msg("could not persist session key to age keys file; run 'deploy key session unlock' to activate it")
+	if _, err := sops.AddSessionKey(cfg.SopsConf, cfg.FlakeDir, pair.Public, sops.UpdateKeys); err != nil {
+		return errors.Wrap(err, "add session key to .sops.yaml")
 	}
 
 	fmt.Printf("public: %s\n", pair.Public)
@@ -272,6 +288,10 @@ func ensureSessionKey(cfg *Config, name string) error {
 }
 
 func unlockSessionKey(cfg *Config, name string) error {
+	if err := requireAdminSOPSConfig(cfg); err != nil {
+		return err
+	}
+
 	privPath := filepath.Join(cfg.FlakeDir, "vars", "admin", name+"-age-key")
 
 	priv, err := sops.DecryptBinary(privPath)
@@ -303,6 +323,10 @@ func unlockSessionKey(cfg *Config, name string) error {
 }
 
 func removeSessionKey(cfg *Config, name string) error {
+	if err := requireAdminSOPSConfig(cfg); err != nil {
+		return err
+	}
+
 	privPath := filepath.Join(cfg.FlakeDir, "vars", "admin", name+"-age-key")
 	pubPath := privPath + ".pub"
 
@@ -326,24 +350,18 @@ func removeSessionKey(cfg *Config, name string) error {
 	return nil
 }
 
-// ensureSopsConf creates a minimal .sops.yaml if one does not exist yet and
-// bootstraps a session age key so the workstation can immediately decrypt
-// secrets without a separate unlock step.
 func ensureSopsConf(cfg *Config) error {
-	if fileExists(cfg.SopsConf) {
-		return nil
+	if !fileExists(cfg.SopsConf) {
+		return errors.Errorf("missing %s; run 'deploy init --admin-pgp <fingerprint>' first", cfg.SopsConf)
 	}
-	log.Info().Str("path", cfg.SopsConf).Msg("creating .sops.yaml (no admin PGP; add keys with 'deploy key add --pgp')")
-	if err := os.MkdirAll(filepath.Dir(cfg.SopsConf), 0o755); err != nil {
-		return errors.Wrapf(err, "create dir for %s", cfg.SopsConf)
-	}
-	if err := sops.InitConf(cfg.SopsConf, nil); err != nil {
-		return err
-	}
-	return ensureSessionKey(cfg, "session")
+	return requireAdminSOPSConfig(cfg)
 }
 
 func ensureHostKey(cfg *Config, machine string) error {
+	if err := requireAdminSOPSConfig(cfg); err != nil {
+		return err
+	}
+
 	dir := vars.MachineHostKeyDir(cfg.FlakeDir, machine)
 	pubPath := vars.MachineHostKeyPubPath(cfg.FlakeDir, machine)
 	privPath := vars.MachineHostKeyPath(cfg.FlakeDir, machine)
@@ -421,6 +439,10 @@ func ensureHostKey(cfg *Config, machine string) error {
 }
 
 func ensureInitrdKey(cfg *Config, machine string) error {
+	if err := requireAdminSOPSConfig(cfg); err != nil {
+		return err
+	}
+
 	dir := vars.MachineInitrdKeyDir(cfg.FlakeDir, machine)
 	privPath := vars.MachineInitrdKeyPath(cfg.FlakeDir, machine)
 	pubPath := vars.MachineInitrdKeyPubPath(cfg.FlakeDir, machine)
@@ -494,33 +516,6 @@ func ensureInitrdKey(cfg *Config, machine string) error {
 		fmt.Printf("public:      %s", pubLine)
 	}
 	return nil
-}
-
-func appendToAgeKeysFile(privateKey string) error {
-	configDir, err := os.UserConfigDir()
-	if err != nil {
-		return errors.Wrap(err, "get user config dir")
-	}
-	dir := filepath.Join(configDir, "sops", "age")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return errors.Wrapf(err, "create %s", dir)
-	}
-	keysFile := filepath.Join(dir, "keys.txt")
-	key := strings.TrimRight(privateKey, "\n")
-	if existing, err := os.ReadFile(keysFile); err == nil {
-		for _, line := range strings.Split(string(existing), "\n") {
-			if strings.TrimSpace(line) == key {
-				return nil
-			}
-		}
-	}
-	f, err := os.OpenFile(keysFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return errors.Wrapf(err, "open %s", keysFile)
-	}
-	defer f.Close()
-	_, err = fmt.Fprintf(f, "%s\n", key)
-	return errors.Wrapf(err, "write to %s", keysFile)
 }
 
 func fileExists(path string) bool {

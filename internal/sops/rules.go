@@ -37,6 +37,9 @@ func InitConf(confPath string, adminPGP []string) error {
 	if _, err := os.Stat(confPath); err == nil {
 		return errors.Errorf("%s already exists", confPath)
 	}
+	if len(adminPGP) == 0 {
+		return errors.New("at least one admin PGP recipient is required")
+	}
 	cfg := sopsYAML{
 		CreationRules: []creationRule{
 			{
@@ -87,8 +90,8 @@ func UpsertMachineRules(confPath, flakeDir, machine, ageKey string, updateFn fun
 	if !found {
 		return false, errors.Errorf("generic sops creation rule not found: %s", vars.GenericMachineRegex)
 	}
-	if len(genericGroup.PGP) == 0 && len(genericGroup.Age) == 0 {
-		log.Warn().Str("machine", machine).Msg("no admin keys in generic sops rule; secrets will only be readable by the machine — add admin keys with 'deploy key add --pgp'")
+	if len(genericGroup.PGP) == 0 {
+		return false, errors.Errorf("generic sops creation rule %q has no admin PGP recipients", vars.GenericMachineRegex)
 	}
 
 	wantedGroup := keyGroup{
@@ -270,9 +273,38 @@ func ListAdminKeys(confPath string) ([]string, error) {
 	return nil, nil
 }
 
+// RequireAdminPGPConfig validates that the mandatory generic rules exist and
+// each contains at least one admin PGP recipient.
+func RequireAdminPGPConfig(confPath string) error {
+	cfg, err := loadSopsYAML(confPath)
+	if err != nil {
+		return err
+	}
+
+	for _, regex := range []string{
+		vars.GenericMachineRegex,
+		vars.GenericSharedRegex,
+		vars.AdminVarsRegex,
+	} {
+		group, err := findGenericGroup(cfg, regex)
+		if err != nil {
+			return err
+		}
+		if len(group.PGP) == 0 {
+			return errors.Errorf("sops creation rule %q has no admin PGP recipients; run 'deploy init --admin-pgp ...' first", regex)
+		}
+	}
+
+	return nil
+}
+
 // AddAdminKey adds a PGP fingerprint to every creation rule and re-encrypts all
 // existing encrypted files. Returns true if anything changed.
 func AddAdminKey(confPath, flakeDir, fingerprint string, updateFn func(string, string) error) (bool, error) {
+	if err := RequireAdminPGPConfig(confPath); err != nil {
+		return false, err
+	}
+
 	cfg, err := loadSopsYAML(confPath)
 	if err != nil {
 		return false, err
@@ -301,6 +333,10 @@ func AddAdminKey(confPath, flakeDir, fingerprint string, updateFn func(string, s
 // RemoveAdminKey removes a PGP fingerprint from every creation rule and
 // re-encrypts all existing encrypted files. Returns true if anything changed.
 func RemoveAdminKey(confPath, flakeDir, fingerprint string, updateFn func(string, string) error) (bool, error) {
+	if err := RequireAdminPGPConfig(confPath); err != nil {
+		return false, err
+	}
+
 	cfg, err := loadSopsYAML(confPath)
 	if err != nil {
 		return false, err
@@ -318,6 +354,14 @@ func RemoveAdminKey(confPath, flakeDir, fingerprint string, updateFn func(string
 	}
 	if !changed {
 		return false, nil
+	}
+
+	for _, r := range cfg.CreationRules {
+		for _, kg := range r.KeyGroups {
+			if len(kg.PGP) == 0 {
+				return false, errors.New("cannot remove the last admin PGP recipient")
+			}
+		}
 	}
 
 	if err := writeSopsYAML(confPath, cfg); err != nil {
@@ -341,11 +385,15 @@ func ListSessionKeys(confPath string) ([]string, error) {
 	return nil, nil
 }
 
-// AddSessionKey adds an age public key to every creation rule that has an
-// explicit key group. This makes a session key transparently usable anywhere
-// an admin key already has access.
+// AddSessionKey adds an age public key to every non-admin creation rule that
+// has an explicit key group. This makes a session key usable for operational
+// secrets without granting access to vars/admin.
 // Returns true if anything changed.
 func AddSessionKey(confPath, flakeDir, ageKey string, updateFn func(string, string) error) (bool, error) {
+	if err := RequireAdminPGPConfig(confPath); err != nil {
+		return false, err
+	}
+
 	cfg, err := loadSopsYAML(confPath)
 	if err != nil {
 		return false, err
@@ -377,6 +425,10 @@ func AddSessionKey(confPath, flakeDir, ageKey string, updateFn func(string, stri
 // RemoveSessionKey removes an age public key from all creation rules and
 // re-encrypts affected files. Returns true if anything changed.
 func RemoveSessionKey(confPath, flakeDir, ageKey string, updateFn func(string, string) error) (bool, error) {
+	if err := RequireAdminPGPConfig(confPath); err != nil {
+		return false, err
+	}
+
 	cfg, err := loadSopsYAML(confPath)
 	if err != nil {
 		return false, err
@@ -404,10 +456,8 @@ func RemoveSessionKey(confPath, flakeDir, ageKey string, updateFn func(string, s
 }
 
 // sessionEligible reports whether a rule should receive session age keys.
-// Rules with empty key groups (bootstrap state) are eligible so that a
-// freshly-created .sops.yaml immediately gains a usable recipient.
 func sessionEligible(r creationRule) bool {
-	return len(r.KeyGroups) > 0
+	return len(r.KeyGroups) > 0 && r.PathRegex != vars.AdminVarsRegex
 }
 
 // ListEncryptedFiles returns every encrypted file currently managed in the
