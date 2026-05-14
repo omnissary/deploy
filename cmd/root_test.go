@@ -2,38 +2,44 @@ package cmd
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
 
-func TestRequireMachineRejectsMissingMachineConfig(t *testing.T) {
-	t.Parallel()
-
-	flakeDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(flakeDir, "flake.nix"), []byte("{}\n"), 0o644); err != nil {
+func writeFlake(t *testing.T, dir, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "flake.nix"), []byte(content), 0o644); err != nil {
 		t.Fatalf("write flake.nix: %v", err)
 	}
+}
+
+func requireNix(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("nix"); err != nil {
+		t.Skip("nix not in PATH")
+	}
+}
+
+func TestRequireMachineRejectsMissingMachineConfig(t *testing.T) {
+	t.Parallel()
+	requireNix(t)
+
+	flakeDir := t.TempDir()
+	writeFlake(t, flakeDir, `{ outputs = _: { nixosConfigurations = {}; }; }`)
 
 	cfg := &Config{FlakeDir: flakeDir}
 	if _, err := requireMachine(cfg, "pegasus"); err == nil {
-		t.Fatal("expected missing machine config error")
+		t.Fatal("expected missing machine error")
 	}
 }
 
 func TestRequireMachineAcceptsExistingMachineConfig(t *testing.T) {
 	t.Parallel()
+	requireNix(t)
 
 	flakeDir := t.TempDir()
-	machineDir := filepath.Join(flakeDir, "machines", "pegasus")
-	if err := os.MkdirAll(machineDir, 0o755); err != nil {
-		t.Fatalf("create machine dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(flakeDir, "flake.nix"), []byte("{}\n"), 0o644); err != nil {
-		t.Fatalf("write flake.nix: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(machineDir, "default.nix"), []byte("{}\n"), 0o644); err != nil {
-		t.Fatalf("write machine config: %v", err)
-	}
+	writeFlake(t, flakeDir, `{ outputs = _: { nixosConfigurations = { pegasus = {}; }; }; }`)
 
 	machine, err := requireMachine(&Config{FlakeDir: flakeDir}, "pegasus")
 	if err != nil {

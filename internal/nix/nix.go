@@ -104,6 +104,17 @@ func (c *Client) Eval(flake, attr string) (json.RawMessage, error) {
 	return json.RawMessage(bytes.TrimSpace(out)), nil
 }
 
+// EvalApply evaluates a nix attribute with an apply function and returns raw JSON bytes.
+func (c *Client) EvalApply(flake, attr, apply string) (json.RawMessage, error) {
+	ref := flake + "#" + attr
+	log.Debug().Str("ref", ref).Str("apply", apply).Msg("nix eval")
+	out, err := c.run("eval", "--json", "--apply", apply, ref)
+	if err != nil {
+		return nil, errors.Wrapf(err, "eval %s", ref)
+	}
+	return json.RawMessage(bytes.TrimSpace(out)), nil
+}
+
 // Copy copies a store path to an SSH remote using NIX_SSHOPTS.
 func (c *Client) Copy(storePath, sshURL string, sshOpts []string) error {
 	log.Debug().Str("path", storePath).Str("to", sshURL).Msg("nix copy")
@@ -150,6 +161,17 @@ func Eval(flake, attr string) (json.RawMessage, error) {
 	ref := flake + "#" + attr
 	log.Debug().Str("ref", ref).Msg("nix eval")
 	out, err := run("eval", "--json", ref)
+	if err != nil {
+		return nil, errors.Wrapf(err, "eval %s", ref)
+	}
+	return json.RawMessage(bytes.TrimSpace(out)), nil
+}
+
+// EvalApply evaluates a nix attribute with an apply function and returns raw JSON bytes.
+func EvalApply(flake, attr, apply string) (json.RawMessage, error) {
+	ref := flake + "#" + attr
+	log.Debug().Str("ref", ref).Str("apply", apply).Msg("nix eval")
+	out, err := run("eval", "--json", "--apply", apply, ref)
 	if err != nil {
 		return nil, errors.Wrapf(err, "eval %s", ref)
 	}

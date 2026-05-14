@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"regexp"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -82,19 +84,23 @@ func requireFlake(cfg *Config) error {
 	return nil
 }
 
-func machineConfigPath(cfg *Config, machine string) string {
-	return filepath.Join(cfg.FlakeDir, "machines", machine, "default.nix")
-}
-
-func requireMachineConfigExists(cfg *Config, machine string) error {
-	path := machineConfigPath(cfg, machine)
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return errors.Errorf("machine %q does not exist: missing %s", machine, path)
-		}
-		return errors.Wrapf(err, "stat machine config %s", path)
+func requireMachineInFlake(cfg *Config, machine string) error {
+	raw, err := nix.EvalApply(cfg.FlakeDir, "nixosConfigurations", "builtins.attrNames")
+	if err != nil {
+		return errors.Wrapf(err, "list machines from flake")
 	}
-	return nil
+	var machines []string
+	if err := json.Unmarshal(raw, &machines); err != nil {
+		return errors.Wrapf(err, "parse machine list from flake")
+	}
+	for _, m := range machines {
+		if m == machine {
+			return nil
+		}
+	}
+	slices.Sort(machines)
+	return errors.Errorf("machine %q not found in flake nixosConfigurations (available: %s)",
+		machine, strings.Join(machines, ", "))
 }
 
 func requireMachine(cfg *Config, value string) (string, error) {
@@ -105,7 +111,7 @@ func requireMachine(cfg *Config, value string) (string, error) {
 	if err := requireFlake(cfg); err != nil {
 		return "", err
 	}
-	if err := requireMachineConfigExists(cfg, machine); err != nil {
+	if err := requireMachineInFlake(cfg, machine); err != nil {
 		return "", err
 	}
 	return machine, nil
