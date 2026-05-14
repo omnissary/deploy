@@ -56,6 +56,39 @@ func defaultNixBuildCores() int {
 	return cores
 }
 
+// urfave/cli emits top-level fish completions behind a generated
+// __fish_<app>_no_subcommand helper. In our environment that helper does not
+// match the root "deploy <TAB>" case correctly, so fish falls back to generic
+// file completion and hides the actual subcommand list. Nested completions
+// still work because they use __fish_seen_subcommand_from, so the bug is
+// limited to the root command state.
+//
+// Keep the workaround local to deploy rather than carrying a vendor patch:
+// rewrite only the generated top-level completion guards to fish's builtin
+// __fish_use_subcommand helper, which is designed for "offer subcommands until
+// a non-flag argument is present" and behaves correctly on current fish.
+// The rewrite covers both forms urfave/cli emits at the root level:
+//   - flag entries:    complete -c ...
+//   - command entries: complete -r -c ...
+func patchFishCompletionScript(script, appName string) string {
+	replacements := [][2]string{
+		{
+			fmt.Sprintf("complete -c %s -n '__fish_%s_no_subcommand'", appName, appName),
+			fmt.Sprintf("complete -c %s -n '__fish_use_subcommand'", appName),
+		},
+		{
+			fmt.Sprintf("complete -r -c %s -n '__fish_%s_no_subcommand'", appName, appName),
+			fmt.Sprintf("complete -r -c %s -n '__fish_use_subcommand'", appName),
+		},
+	}
+
+	for _, replacement := range replacements {
+		script = strings.ReplaceAll(script, replacement[0], replacement[1])
+	}
+
+	return script
+}
+
 const configKey = "deploy.config"
 
 var simpleNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
@@ -264,6 +297,7 @@ func New() *cli.App {
 					if err != nil {
 						return err
 					}
+					s = patchFishCompletionScript(s, ctx.App.Name)
 					_, err = fmt.Fprint(ctx.App.Writer, s)
 					return err
 				},
