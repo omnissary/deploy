@@ -13,6 +13,7 @@ import (
 	"git.tatikoma.dev/corpix/deploy/internal/agekey"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
 	"git.tatikoma.dev/corpix/deploy/internal/sshkey"
+	"git.tatikoma.dev/corpix/deploy/internal/vars"
 )
 
 func keyCmd() *cli.Command {
@@ -319,9 +320,9 @@ func removeSessionKey(cfg *Config, name string) error {
 }
 
 func ensureHostKey(cfg *Config, machine string) error {
-	dir := filepath.Join(cfg.FlakeDir, "vars", "per-machine", machine, "openssh")
-	pubPath := filepath.Join(dir, "ssh_host_ed25519_key.pub")
-	privPath := filepath.Join(dir, "ssh_host_ed25519_key")
+	dir := vars.MachineHostKeyDir(cfg.FlakeDir, machine)
+	pubPath := vars.MachineHostKeyPubPath(cfg.FlakeDir, machine)
+	privPath := vars.MachineHostKeyPath(cfg.FlakeDir, machine)
 	generated := false
 
 	if _, err := os.Stat(pubPath); err == nil {
@@ -372,7 +373,7 @@ func ensureHostKey(cfg *Config, machine string) error {
 	}
 	log.Debug().Str("machine", machine).Str("age", ageKey).Msg("derived age key")
 
-	rulesChanged, err := sops.UpsertMachineRules(cfg.SopsConf, machine, ageKey, sops.UpdateKeys)
+	rulesChanged, err := sops.UpsertMachineRules(cfg.SopsConf, cfg.FlakeDir, machine, ageKey, sops.UpdateKeys)
 	if err != nil {
 		return errors.Wrapf(err, "update sops rules for %s", machine)
 	}
@@ -386,9 +387,9 @@ func ensureHostKey(cfg *Config, machine string) error {
 }
 
 func ensureInitrdKey(cfg *Config, machine string) error {
-	dir := filepath.Join(cfg.FlakeDir, "vars", "per-machine", machine, "initrd-ssh")
-	privPath := filepath.Join(dir, "id_ed25519")
-	pubPath := filepath.Join(dir, "id_ed25519.pub")
+	dir := vars.MachineInitrdKeyDir(cfg.FlakeDir, machine)
+	privPath := vars.MachineInitrdKeyPath(cfg.FlakeDir, machine)
+	pubPath := vars.MachineInitrdKeyPubPath(cfg.FlakeDir, machine)
 	generated := false
 
 	privExists := fileExists(privPath)

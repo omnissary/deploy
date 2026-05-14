@@ -10,15 +10,8 @@ import (
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
 	"git.tatikoma.dev/corpix/deploy/internal/sshkey"
+	"git.tatikoma.dev/corpix/deploy/internal/vars"
 	"gopkg.in/yaml.v3"
-)
-
-const (
-	genericMachineRegex = `machines/[^/]+/secrets\.yaml$`
-	genericSharedRegex  = `vars/shared/[^/]+/secrets\.yaml$`
-	adminVarsRegex      = `vars/admin/.+$`
-	genericInitrdRegex  = `vars/per-machine/[^/]+/initrd-ssh/id_ed25519$`
-	genericHostKeyRegex = `vars/per-machine/[^/]+/openssh/ssh_host_ed25519_key$`
 )
 
 type sopsYAML struct {
@@ -37,12 +30,9 @@ type keyGroup struct {
 	Age []string `yaml:"age,omitempty"`
 }
 
-type sharedGroup struct {
-	Machines []string `yaml:"machines"`
-}
-
-// InitConf creates a fresh .sops.yaml with the generic machine secrets rule
-// and the admin-only vars/admin rule. Fails if the file already exists.
+// InitConf creates a fresh .sops.yaml with the generic machine secrets rule,
+// generic shared secrets rule, and admin-only vars/admin rule.
+// Fails if the file already exists.
 func InitConf(confPath string, adminPGP []string) error {
 	if _, err := os.Stat(confPath); err == nil {
 		return errors.Errorf("%s already exists", confPath)
@@ -50,11 +40,15 @@ func InitConf(confPath string, adminPGP []string) error {
 	cfg := sopsYAML{
 		CreationRules: []creationRule{
 			{
-				PathRegex: genericMachineRegex,
+				PathRegex: vars.GenericMachineRegex,
 				KeyGroups: []keyGroup{{PGP: adminPGP}},
 			},
 			{
-				PathRegex: adminVarsRegex,
+				PathRegex: vars.GenericSharedRegex,
+				KeyGroups: []keyGroup{{PGP: adminPGP}},
+			},
+			{
+				PathRegex: vars.AdminVarsRegex,
 				KeyGroups: []keyGroup{{PGP: adminPGP}},
 			},
 		},
@@ -70,7 +64,7 @@ func InitConf(confPath string, adminPGP []string) error {
 // Machine rules inherit the full key group from the generic rule (PGP + session
 // age keys) and append the host age key on top.
 // Returns true if .sops.yaml was modified.
-func UpsertMachineRules(confPath, machine, ageKey string, updateFn func(confPath, filePath string) error) (bool, error) {
+func UpsertMachineRules(confPath, flakeDir, machine, ageKey string, updateFn func(confPath, filePath string) error) (bool, error) {
 	log.Debug().Str("machine", machine).Str("age", ageKey).Msg("upsert sops rules")
 
 	cfg, err := loadSopsYAML(confPath)
@@ -78,20 +72,20 @@ func UpsertMachineRules(confPath, machine, ageKey string, updateFn func(confPath
 		return false, err
 	}
 
-	machineRegex := `machines/` + machine + `/secrets\.yaml$`
-	varsRegex := `vars/per-machine/` + machine + `/.+$`
+	machineRegex := vars.MachineSecretsRegex(machine)
+	varsRegex := vars.MachineVarsRegex(machine)
 
 	var genericGroup keyGroup
 	found := false
 	for _, r := range cfg.CreationRules {
-		if r.PathRegex == genericMachineRegex && len(r.KeyGroups) > 0 {
+		if r.PathRegex == vars.GenericMachineRegex && len(r.KeyGroups) > 0 {
 			genericGroup = r.KeyGroups[0]
 			found = true
 			break
 		}
 	}
 	if !found {
-		return false, errors.Errorf("generic sops creation rule not found: %s", genericMachineRegex)
+		return false, errors.Errorf("generic sops creation rule not found: %s", vars.GenericMachineRegex)
 	}
 	if len(genericGroup.PGP) == 0 {
 		return false, errors.Errorf("generic sops rule has no PGP keys")
@@ -118,28 +112,28 @@ func UpsertMachineRules(confPath, machine, ageKey string, updateFn func(confPath
 	changed := false
 	switch {
 	case machineIdx == -1:
-		cfg.CreationRules = prependBefore(cfg.CreationRules, machineRule, genericMachineRegex)
+		cfg.CreationRules = prependBefore(cfg.CreationRules, machineRule, vars.GenericMachineRegex)
 		changed = true
 	case !rulesEqual(cfg.CreationRules[machineIdx], machineRule):
 		cfg.CreationRules[machineIdx] = machineRule
 		changed = true
 	}
-	if idx := indexOfRule(cfg.CreationRules, machineRegex); idx != -1 && idx > indexOfRule(cfg.CreationRules, genericMachineRegex) {
-		cfg.CreationRules = moveRuleBefore(cfg.CreationRules, machineRegex, genericMachineRegex)
+	if idx := indexOfRule(cfg.CreationRules, machineRegex); idx != -1 && idx > indexOfRule(cfg.CreationRules, vars.GenericMachineRegex) {
+		cfg.CreationRules = moveRuleBefore(cfg.CreationRules, machineRegex, vars.GenericMachineRegex)
 		changed = true
 	}
 	switch {
 	case varsIdx == -1:
-		cfg.CreationRules = prependBeforeAny(cfg.CreationRules, varsRule, genericInitrdRegex, genericHostKeyRegex, genericMachineRegex)
+		cfg.CreationRules = prependBeforeAny(cfg.CreationRules, varsRule, vars.GenericInitrdRegex, vars.GenericHostKeyRegex, vars.GenericMachineRegex)
 		changed = true
 	case !rulesEqual(cfg.CreationRules[varsIdx], varsRule):
 		cfg.CreationRules[varsIdx] = varsRule
 		changed = true
 	}
 	if idx := indexOfRule(cfg.CreationRules, varsRegex); idx != -1 {
-		anchor := firstRuleIndex(cfg.CreationRules, genericInitrdRegex, genericHostKeyRegex, genericMachineRegex)
+		anchor := firstRuleIndex(cfg.CreationRules, vars.GenericInitrdRegex, vars.GenericHostKeyRegex, vars.GenericMachineRegex)
 		if anchor != -1 && idx > anchor {
-			cfg.CreationRules = moveRuleBeforeAny(cfg.CreationRules, varsRegex, genericInitrdRegex, genericHostKeyRegex, genericMachineRegex)
+			cfg.CreationRules = moveRuleBeforeAny(cfg.CreationRules, varsRegex, vars.GenericInitrdRegex, vars.GenericHostKeyRegex, vars.GenericMachineRegex)
 			changed = true
 		}
 	}
@@ -150,7 +144,7 @@ func UpsertMachineRules(confPath, machine, ageKey string, updateFn func(confPath
 		}
 		log.Info().Str("machine", machine).Msg("updated .sops.yaml")
 
-		for _, path := range machineFiles(machine) {
+		for _, path := range vars.MachineFiles(flakeDir, machine) {
 			if _, err := os.Stat(path); err != nil {
 				continue
 			}
@@ -164,91 +158,23 @@ func UpsertMachineRules(confPath, machine, ageKey string, updateFn func(confPath
 	return changed, nil
 }
 
-// UpsertAllSharedRules ensures every shared secret group rule matches
-// vars/shared/groups.yaml. Returns true if .sops.yaml was modified.
-func UpsertAllSharedRules(confPath, flakeDir, groupsPath string, updateFn func(confPath, filePath string) error) (bool, error) {
-	groups, err := loadSharedGroups(groupsPath)
-	if err != nil {
-		return false, err
-	}
-	if len(groups) == 0 {
-		return false, nil
-	}
-
-	names := make([]string, 0, len(groups))
-	for name := range groups {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	changed := false
-	for _, name := range names {
-		groupChanged, err := UpsertSharedRule(confPath, flakeDir, groupsPath, name, updateFn)
-		if err != nil {
-			return changed, err
-		}
-		changed = changed || groupChanged
-	}
-	return changed, nil
-}
-
-// UpsertMachineSharedRules ensures every shared secret rule that includes the
-// given machine matches vars/shared/groups.yaml. Returns true if .sops.yaml was
-// modified.
-func UpsertMachineSharedRules(confPath, flakeDir, groupsPath, machine string, updateFn func(confPath, filePath string) error) (bool, error) {
-	groups, err := loadSharedGroups(groupsPath)
-	if err != nil {
-		return false, err
-	}
-	if len(groups) == 0 {
-		return false, nil
-	}
-
-	names := make([]string, 0, len(groups))
-	for name, group := range groups {
-		if containsStr(group.Machines, machine) {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-
-	changed := false
-	for _, name := range names {
-		groupChanged, err := UpsertSharedRule(confPath, flakeDir, groupsPath, name, updateFn)
-		if err != nil {
-			return changed, err
-		}
-		changed = changed || groupChanged
-	}
-	return changed, nil
-}
-
-// UpsertSharedRule ensures a shared secret creation rule exists for one group.
-// The rule inherits the generic shared-secret key group and appends every
-// machine age recipient listed in vars/shared/groups.yaml.
-func UpsertSharedRule(confPath, flakeDir, groupsPath, group string, updateFn func(confPath, filePath string) error) (bool, error) {
-	log.Debug().Str("group", group).Msg("upsert shared sops rule")
-
-	groups, err := loadSharedGroups(groupsPath)
-	if err != nil {
-		return false, err
-	}
-	entry, ok := groups[group]
-	if !ok {
-		return false, errors.Errorf("shared group %q not found in %s", group, groupsPath)
-	}
+// EnsureSharedRule creates or updates the .sops.yaml creation rule for the
+// shared secrets group, setting the recipients to the given machines.
+// Returns true if .sops.yaml was modified.
+func EnsureSharedRule(confPath, flakeDir, group string, machines []string, updateFn func(confPath, filePath string) error) (bool, error) {
+	log.Debug().Str("group", group).Strs("machines", machines).Msg("ensure shared sops rule")
 
 	cfg, err := loadSopsYAML(confPath)
 	if err != nil {
 		return false, err
 	}
 
-	genericGroup, err := findGenericGroup(cfg, genericSharedRegex)
+	genericGroup, err := findGenericGroup(cfg, vars.GenericSharedRegex)
 	if err != nil {
 		return false, err
 	}
 
-	ages, err := machineAgeKeys(flakeDir, entry.Machines)
+	ages, err := machineAgeKeys(flakeDir, machines)
 	if err != nil {
 		return false, errors.Wrapf(err, "derive age keys for shared group %s", group)
 	}
@@ -258,21 +184,14 @@ func UpsertSharedRule(confPath, flakeDir, groupsPath, group string, updateFn fun
 		Age: uniqueStrings(append(append([]string{}, genericGroup.Age...), ages...)),
 	}
 
-	groupRegex := `vars/shared/` + group + `/secrets\.yaml$`
+	groupRegex := vars.SharedSecretsRegex(group)
 	groupRule := creationRule{PathRegex: groupRegex, KeyGroups: []keyGroup{wantedGroup}}
 
-	idx := -1
-	for i, r := range cfg.CreationRules {
-		if r.PathRegex == groupRegex {
-			idx = i
-			break
-		}
-	}
-
+	idx := indexOfRule(cfg.CreationRules, groupRegex)
 	changed := false
 	switch {
 	case idx == -1:
-		cfg.CreationRules = prependBefore(cfg.CreationRules, groupRule, genericSharedRegex)
+		cfg.CreationRules = prependBefore(cfg.CreationRules, groupRule, vars.GenericSharedRegex)
 		changed = true
 	case !rulesEqual(cfg.CreationRules[idx], groupRule):
 		cfg.CreationRules[idx] = groupRule
@@ -285,7 +204,7 @@ func UpsertSharedRule(confPath, flakeDir, groupsPath, group string, updateFn fun
 		}
 		log.Info().Str("group", group).Msg("updated shared rule in .sops.yaml")
 
-		path := filepath.Join(flakeDir, "vars", "shared", group, "secrets.yaml")
+		path := vars.SharedSecretsPath(flakeDir, group)
 		if _, err := os.Stat(path); err == nil {
 			log.Debug().Str("file", path).Msg("sops updatekeys")
 			if err := updateFn(confPath, path); err != nil {
@@ -297,6 +216,46 @@ func UpsertSharedRule(confPath, flakeDir, groupsPath, group string, updateFn fun
 	return changed, nil
 }
 
+// AddMachineToSharedGroup adds a machine's age key to an existing shared group
+// rule. Returns true if .sops.yaml was modified. No-op if already present.
+func AddMachineToSharedGroup(confPath, flakeDir, group, machineAgeKey string, updateFn func(confPath, filePath string) error) (bool, error) {
+	log.Debug().Str("group", group).Str("age", machineAgeKey).Msg("add machine to shared group")
+
+	cfg, err := loadSopsYAML(confPath)
+	if err != nil {
+		return false, err
+	}
+
+	groupRegex := vars.SharedSecretsRegex(group)
+	idx := indexOfRule(cfg.CreationRules, groupRegex)
+	if idx == -1 {
+		return false, errors.Errorf("shared group rule %q not found in .sops.yaml; run 'secret ensure %s --machines ...' first", group, group)
+	}
+
+	if len(cfg.CreationRules[idx].KeyGroups) == 0 {
+		return false, errors.Errorf("shared group rule %q has no key groups", group)
+	}
+	kg := cfg.CreationRules[idx].KeyGroups[0]
+	if containsStr(kg.Age, machineAgeKey) {
+		return false, nil
+	}
+
+	cfg.CreationRules[idx].KeyGroups[0].Age = uniqueStrings(append(kg.Age, machineAgeKey))
+	if err := writeSopsYAML(confPath, cfg); err != nil {
+		return false, err
+	}
+	log.Info().Str("group", group).Msg("enrolled machine in shared group in .sops.yaml")
+
+	path := vars.SharedSecretsPath(flakeDir, group)
+	if _, err := os.Stat(path); err == nil {
+		log.Debug().Str("file", path).Msg("sops updatekeys")
+		if err := updateFn(confPath, path); err != nil {
+			return true, errors.Wrapf(err, "updatekeys %s", path)
+		}
+	}
+	return true, nil
+}
+
 // ListAdminKeys returns the PGP fingerprints from the generic machine secrets rule.
 func ListAdminKeys(confPath string) ([]string, error) {
 	cfg, err := loadSopsYAML(confPath)
@@ -304,7 +263,7 @@ func ListAdminKeys(confPath string) ([]string, error) {
 		return nil, err
 	}
 	for _, r := range cfg.CreationRules {
-		if r.PathRegex == genericMachineRegex && len(r.KeyGroups) > 0 {
+		if r.PathRegex == vars.GenericMachineRegex && len(r.KeyGroups) > 0 {
 			return r.KeyGroups[0].PGP, nil
 		}
 	}
@@ -375,7 +334,7 @@ func ListSessionKeys(confPath string) ([]string, error) {
 		return nil, err
 	}
 	for _, r := range cfg.CreationRules {
-		if r.PathRegex == genericMachineRegex && len(r.KeyGroups) > 0 {
+		if r.PathRegex == vars.GenericMachineRegex && len(r.KeyGroups) > 0 {
 			return r.KeyGroups[0].Age, nil
 		}
 	}
@@ -445,8 +404,6 @@ func RemoveSessionKey(confPath, flakeDir, ageKey string, updateFn func(string, s
 }
 
 // sessionEligible reports whether a rule should receive session age keys.
-// Session keys are treated as admin-equivalent and therefore propagate to any
-// rule with explicit recipients.
 func sessionEligible(r creationRule) bool {
 	for _, kg := range r.KeyGroups {
 		if len(kg.PGP) > 0 || len(kg.Age) > 0 {
@@ -454,14 +411,6 @@ func sessionEligible(r creationRule) bool {
 		}
 	}
 	return false
-}
-
-func machineFiles(machine string) []string {
-	return []string{
-		"machines/" + machine + "/secrets.yaml",
-		"vars/per-machine/" + machine + "/openssh/ssh_host_ed25519_key",
-		"vars/per-machine/" + machine + "/initrd-ssh/id_ed25519",
-	}
 }
 
 // ListEncryptedFiles returns every encrypted file currently managed in the
@@ -472,7 +421,7 @@ func ListEncryptedFiles(flakeDir string) []string {
 
 func allEncryptedFiles(flakeDir string) []string {
 	var files []string
-	adminGlob, _ := filepath.Glob(filepath.Join(flakeDir, "vars", "admin", "*"))
+	adminGlob, _ := filepath.Glob(vars.AdminGlob(flakeDir))
 	for _, f := range adminGlob {
 		if !strings.HasSuffix(f, ".pub") {
 			fi, err := os.Stat(f)
@@ -482,10 +431,10 @@ func allEncryptedFiles(flakeDir string) []string {
 		}
 	}
 	for _, pat := range []string{
-		filepath.Join(flakeDir, "machines", "*", "secrets.yaml"),
-		filepath.Join(flakeDir, "vars", "shared", "*", "secrets.yaml"),
-		filepath.Join(flakeDir, "vars", "per-machine", "*", "openssh", "ssh_host_ed25519_key"),
-		filepath.Join(flakeDir, "vars", "per-machine", "*", "initrd-ssh", "id_ed25519"),
+		vars.MachineSecretsGlob(flakeDir),
+		vars.SharedSecretsGlob(flakeDir),
+		vars.MachineHostKeyGlob(flakeDir),
+		vars.MachineInitrdKeyGlob(flakeDir),
 	} {
 		matches, _ := filepath.Glob(pat)
 		files = append(files, matches...)
@@ -502,33 +451,10 @@ func findGenericGroup(cfg sopsYAML, regex string) (keyGroup, error) {
 	return keyGroup{}, errors.Errorf("generic sops creation rule not found: %s", regex)
 }
 
-func loadSharedGroups(groupsPath string) (map[string]sharedGroup, error) {
-	if _, err := os.Stat(groupsPath); err != nil {
-		if os.IsNotExist(err) {
-			return map[string]sharedGroup{}, nil
-		}
-		return nil, errors.Wrapf(err, "stat %s", groupsPath)
-	}
-
-	raw, err := os.ReadFile(groupsPath)
-	if err != nil {
-		return nil, errors.Wrapf(err, "read %s", groupsPath)
-	}
-
-	var groups map[string]sharedGroup
-	if err := yaml.Unmarshal(raw, &groups); err != nil {
-		return nil, errors.Wrapf(err, "parse %s", groupsPath)
-	}
-	if groups == nil {
-		groups = map[string]sharedGroup{}
-	}
-	return groups, nil
-}
-
 func machineAgeKeys(flakeDir string, machines []string) ([]string, error) {
 	keys := make([]string, 0, len(machines))
 	for _, machine := range machines {
-		pubPath := filepath.Join(flakeDir, "vars", "per-machine", machine, "openssh", "ssh_host_ed25519_key.pub")
+		pubPath := vars.MachineHostKeyPubPath(flakeDir, machine)
 		pub, err := os.ReadFile(pubPath)
 		if err != nil {
 			if os.IsNotExist(err) {

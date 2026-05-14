@@ -21,6 +21,8 @@ import (
 	"git.tatikoma.dev/corpix/deploy/internal/hosts"
 	"git.tatikoma.dev/corpix/deploy/internal/nix"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
+	"git.tatikoma.dev/corpix/deploy/internal/sshkey"
+	"git.tatikoma.dev/corpix/deploy/internal/vars"
 )
 
 const (
@@ -197,6 +199,9 @@ func machineInitCmd() *cli.Command {
 				return err
 			}
 			if err := ensureSecrets(cfg, machine); err != nil {
+				return err
+			}
+			if err := enrollInSharedSecrets(cfg, machine); err != nil {
 				return err
 			}
 			if err := ensureZFSKey(cfg, machine); err != nil {
@@ -703,7 +708,7 @@ func machineUnlockZFSCmd() *cli.Command {
 			wc := writerConfig{}
 			for pool, remotePath := range pools {
 				secretKey := pool + "-root-key"
-				key, err := sops.DecryptYAMLExtract(secretsPath(cfg, machine), secretKey)
+				key, err := sops.DecryptYAMLExtract(vars.MachineSecretsPath(cfg.FlakeDir, machine), secretKey)
 				if err != nil {
 					return errors.Wrapf(err, "decrypt %s for %s", secretKey, machine)
 				}
@@ -729,8 +734,8 @@ func machineUnlockZFSCmd() *cli.Command {
 // --- helpers ---
 
 func prepareExtraSSHKeys(cfg *Config, machine, extraDir string) error {
-	srcPriv := filepath.Join(cfg.FlakeDir, "vars", "per-machine", machine, "openssh", "ssh_host_ed25519_key")
-	srcPub := srcPriv + ".pub"
+	srcPriv := vars.MachineHostKeyPath(cfg.FlakeDir, machine)
+	srcPub := vars.MachineHostKeyPubPath(cfg.FlakeDir, machine)
 
 	dstDir := filepath.Join(extraDir, "etc", "ssh")
 	if err := os.MkdirAll(dstDir, 0o755); err != nil {
@@ -886,7 +891,7 @@ func decryptZFSKeys(cfg *Config, machine string) (map[string]string, error) {
 	for pool, remotePath := range pools {
 		secretKey := pool + "-root-key"
 		log.Debug().Str("machine", machine).Str("pool", pool).Msg("decrypting ZFS root key")
-		key, err := sops.DecryptYAMLExtract(secretsPath(cfg, machine), secretKey)
+		key, err := sops.DecryptYAMLExtract(vars.MachineSecretsPath(cfg.FlakeDir, machine), secretKey)
 		if err != nil {
 			return nil, errors.Wrapf(err, "decrypt %s for %s", secretKey, machine)
 		}
@@ -924,9 +929,74 @@ func ensureZFSKey(cfg *Config, machine string) error {
 	return nil
 }
 
+// enrollInSharedSecrets adds the machine to any shared secret groups that its
+// NixOS config references via sops.secrets.*.sopsFile.
+func enrollInSharedSecrets(cfg *Config, machine string) error {
+	const apply = `cfg: builtins.attrNames (builtins.listToAttrs (
+		builtins.map (s: { name = s.sopsFile; value = null; })
+		(builtins.attrValues cfg.sops.secrets)))`
+	raw, err := nix.EvalApply(cfg.FlakeDir, cfg.MachineAttr(machine, "config"), apply)
+	if err != nil {
+		return errors.Wrapf(err, "eval sops secrets for %s", machine)
+	}
+	var absPaths []string
+	if err := json.Unmarshal(raw, &absPaths); err != nil {
+		return errors.Wrapf(err, "parse sops secret paths for %s", machine)
+	}
+	if len(absPaths) == 0 {
+		return nil
+	}
+
+	pubPath := vars.MachineHostKeyPubPath(cfg.FlakeDir, machine)
+	pub, err := os.ReadFile(pubPath)
+	if err != nil {
+		return errors.Wrapf(err, "read host public key for %s", machine)
+	}
+	machineAge, err := sshkey.ToAge(pub)
+	if err != nil {
+		return errors.Wrapf(err, "derive age key for %s", machine)
+	}
+
+	sharedDir := vars.SharedSecretsDir(cfg.FlakeDir)
+	entries, err := os.ReadDir(sharedDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return errors.Wrapf(err, "read shared secrets dir")
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
+			continue
+		}
+		name := entry.Name()
+		group := name[:len(name)-len(".yaml")]
+		sharedPath := vars.SharedSecretsPath(cfg.FlakeDir, group)
+		if !fileExists(sharedPath) {
+			continue
+		}
+		suffix := vars.SharedSecretsPathSuffix(group)
+		referenced := false
+		for _, p := range absPaths {
+			if strings.HasSuffix(p, suffix) {
+				referenced = true
+				break
+			}
+		}
+		if !referenced {
+			continue
+		}
+		log.Info().Str("machine", machine).Str("group", group).Msg("enrolling machine in shared secrets")
+		if _, err := sops.AddMachineToSharedGroup(cfg.SopsConf, cfg.FlakeDir, group, machineAge, sops.UpdateKeys); err != nil {
+			return errors.Wrapf(err, "enroll %s in shared group %s", machine, group)
+		}
+	}
+	return nil
+}
+
 func ensureZFSPoolKey(cfg *Config, machine, pool string) error {
 	secretKey := pool + "-root-key"
-	path := secretsPath(cfg, machine)
+	path := vars.MachineSecretsPath(cfg.FlakeDir, machine)
 	if _, err := sops.DecryptYAMLExtract(path, secretKey); err == nil {
 		log.Debug().Str("machine", machine).Str("pool", pool).Msg("ZFS key already present")
 		return nil
@@ -955,7 +1025,7 @@ func prepareInitrdKeys(cfg *Config, machine, extraDir string) error {
 		if err != nil {
 			return err
 		}
-		localSecret := filepath.Join(cfg.FlakeDir, "vars", "per-machine", machine, "initrd-ssh", localKey)
+		localSecret := filepath.Join(vars.MachineInitrdKeyDir(cfg.FlakeDir, machine), localKey)
 		if !fileExists(localSecret) {
 			return errors.Errorf("missing initrd SSH key for %s: %s", hostKeyPath, localSecret)
 		}
@@ -978,8 +1048,8 @@ func prepareInitrdKeys(cfg *Config, machine, extraDir string) error {
 func uploadOpenSSHHostKey(cfg *Config, machine, targetHost string, sshArgs []string, wc writerConfig) error {
 	const hostKeyPath = "/etc/ssh/ssh_host_ed25519_key"
 
-	localPublic := filepath.Join(cfg.FlakeDir, "vars", "per-machine", machine, "openssh", "ssh_host_ed25519_key.pub")
-	localSecret := filepath.Join(cfg.FlakeDir, "vars", "per-machine", machine, "openssh", "ssh_host_ed25519_key")
+	localPublic := vars.MachineHostKeyPubPath(cfg.FlakeDir, machine)
+	localSecret := vars.MachineHostKeyPath(cfg.FlakeDir, machine)
 	if !fileExists(localSecret) {
 		return errors.Errorf("missing ssh host key %s", localSecret)
 	}
@@ -1028,8 +1098,8 @@ func uploadInitrdKeys(cfg *Config, machine, targetHost string, sshArgs []string,
 		if err != nil {
 			return err
 		}
-		localPublic := filepath.Join(cfg.FlakeDir, "vars", "per-machine", machine, "initrd-ssh", localKey+".pub")
-		localSecret := filepath.Join(cfg.FlakeDir, "vars", "per-machine", machine, "initrd-ssh", localKey)
+		localPublic := filepath.Join(vars.MachineInitrdKeyDir(cfg.FlakeDir, machine), localKey+".pub")
+		localSecret := filepath.Join(vars.MachineInitrdKeyDir(cfg.FlakeDir, machine), localKey)
 		if !fileExists(localSecret) {
 			return errors.Errorf("missing initrd SSH key %s", localSecret)
 		}

@@ -2,13 +2,13 @@ package cmd
 
 import (
 	"os"
-	"path/filepath"
 
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
 	"github.com/urfave/cli/v2"
 
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
+	"git.tatikoma.dev/corpix/deploy/internal/vars"
 )
 
 func initCmd() *cli.Command {
@@ -39,7 +39,7 @@ func initCmd() *cli.Command {
 			}
 			log.Info().Str("path", cfg.SopsConf).Msg(".sops.yaml created")
 
-			adminDir := filepath.Join(cfg.FlakeDir, "vars", "admin")
+			adminDir := vars.AdminDir(cfg.FlakeDir)
 			if err := os.MkdirAll(adminDir, 0o755); err != nil {
 				return errors.Wrapf(err, "create %s", adminDir)
 			}
