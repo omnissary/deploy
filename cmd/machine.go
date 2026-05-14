@@ -844,8 +844,12 @@ func terminateSSHControlMaster(pid int, masterErrCh <-chan error, signal syscall
 // ZFS pool that uses file-based encryption, derived from config.disko.devices.zpool.
 // Returns an empty map when the machine does not use disko.
 func diskoEncryptedPools(cfg *Config, machine string) (map[string]string, error) {
-	raw, err := nix.EvalApply(cfg.FlakeDir, cfg.MachineAttr(machine, "config"),
-		`cfg: if cfg ? disko then cfg.disko.devices.zpool else {}`)
+	raw, err := nix.EvalApply(cfg.FlakeDir, cfg.MachineAttr(machine, "config"), `
+		cfg:
+		if cfg ? disko
+		then builtins.mapAttrs (_: p: { inherit (p) rootFsOptions; }) cfg.disko.devices.zpool
+		else {}
+	`)
 	if err != nil {
 		return nil, errors.Wrapf(err, "eval disko zpool config for %s", machine)
 	}
@@ -940,10 +944,12 @@ func ensureZFSKey(cfg *Config, machine string) error {
 // enrollInSharedSecrets adds the machine to any shared secret groups that its
 // NixOS config references via sops.secrets.*.sopsFile.
 func enrollInSharedSecrets(cfg *Config, machine string) error {
-	const apply = `cfg: builtins.attrNames (builtins.listToAttrs (
-		builtins.map (s: { name = s.sopsFile; value = null; })
-		(builtins.attrValues cfg.sops.secrets)))`
-	raw, err := nix.EvalApply(cfg.FlakeDir, cfg.MachineAttr(machine, "config"), apply)
+	raw, err := nix.EvalApply(cfg.FlakeDir, cfg.MachineAttr(machine, "config"), `
+		cfg:
+		builtins.attrNames (builtins.listToAttrs (
+			builtins.map (s: { name = s.sopsFile; value = null; })
+			(builtins.attrValues cfg.sops.secrets)))
+	`)
 	if err != nil {
 		return errors.Wrapf(err, "eval sops secrets for %s", machine)
 	}

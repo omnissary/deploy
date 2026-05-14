@@ -3,6 +3,7 @@ package nix
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -71,10 +72,15 @@ func (c *Client) commandEnv() []string {
 }
 
 func (c *Client) run(args ...string) ([]byte, error) {
+	return c.runStdin(nil, args...)
+}
+
+func (c *Client) runStdin(stdin io.Reader, args ...string) ([]byte, error) {
 	log.Debug().Strs("args", args).Msg("nix")
 	cmd := exec.Command("nix", args...)
 	cmd.Env = c.commandEnv()
 	cmd.Stderr = c.stderr
+	cmd.Stdin = stdin
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, errors.Wrapf(err, "nix %s", strings.Join(args, " "))
@@ -105,12 +111,14 @@ func (c *Client) Eval(flake, attr string) (json.RawMessage, error) {
 }
 
 // EvalApply evaluates a nix attribute with an apply function and returns raw JSON bytes.
+// The expression is piped via stdin using --file -, which supports multiline Nix and
+// implies --impure (required for builtins.getFlake with local paths).
 func (c *Client) EvalApply(flake, attr, apply string) (json.RawMessage, error) {
-	ref := flake + "#" + attr
-	log.Debug().Str("ref", ref).Str("apply", apply).Msg("nix eval")
-	out, err := c.run("eval", "--json", "--apply", apply, ref)
+	log.Debug().Str("flake", flake).Str("attr", attr).Str("apply", apply).Msg("nix eval")
+	expr := buildEvalExpr(flake, attr, apply)
+	out, err := c.runStdin(strings.NewReader(expr), "eval", "--json", "--file", "-")
 	if err != nil {
-		return nil, errors.Wrapf(err, "eval %s", ref)
+		return nil, errors.Wrapf(err, "eval %s#%s", flake, attr)
 	}
 	return json.RawMessage(bytes.TrimSpace(out)), nil
 }
@@ -134,10 +142,15 @@ func (c *Client) Copy(storePath, sshURL string, sshOpts []string) error {
 // --- package-level functions backed by global writers ---
 
 func run(args ...string) ([]byte, error) {
+	return runStdin(nil, args...)
+}
+
+func runStdin(stdin io.Reader, args ...string) ([]byte, error) {
 	log.Debug().Strs("args", args).Msg("nix")
 	cmd := exec.Command("nix", args...)
 	cmd.Env = commandEnv()
 	cmd.Stderr = stderrWriter
+	cmd.Stdin = stdin
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, errors.Wrapf(err, "nix %s", strings.Join(args, " "))
@@ -168,14 +181,28 @@ func Eval(flake, attr string) (json.RawMessage, error) {
 }
 
 // EvalApply evaluates a nix attribute with an apply function and returns raw JSON bytes.
+// The expression is piped via stdin using --file -, which supports multiline Nix and
+// implies --impure (required for builtins.getFlake with local paths).
 func EvalApply(flake, attr, apply string) (json.RawMessage, error) {
-	ref := flake + "#" + attr
-	log.Debug().Str("ref", ref).Str("apply", apply).Msg("nix eval")
-	out, err := run("eval", "--json", "--apply", apply, ref)
+	log.Debug().Str("flake", flake).Str("attr", attr).Str("apply", apply).Msg("nix eval")
+	expr := buildEvalExpr(flake, attr, apply)
+	out, err := runStdin(strings.NewReader(expr), "eval", "--json", "--file", "-")
 	if err != nil {
-		return nil, errors.Wrapf(err, "eval %s", ref)
+		return nil, errors.Wrapf(err, "eval %s#%s", flake, attr)
 	}
 	return json.RawMessage(bytes.TrimSpace(out)), nil
+}
+
+const evalExprTemplate = `
+let
+  _flake = builtins.getFlake "path:%s";
+  _value = _flake.%s;
+in
+  (%s) _value
+`
+
+func buildEvalExpr(flakeDir, attr, apply string) string {
+	return fmt.Sprintf(evalExprTemplate, flakeDir, attr, apply)
 }
 
 // Copy copies a store path to an SSH remote using NIX_SSHOPTS.
