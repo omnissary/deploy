@@ -34,16 +34,16 @@
             vendorHash = null;
             meta.mainProgram = "deploy";
           };
-        in
-        {
-          packages.default = pkgs.symlinkJoin {
+          deploy = pkgs.symlinkJoin {
             name = "deploy";
             paths = [ unwrapped ];
             nativeBuildInputs = [ pkgs.makeWrapper ];
             postBuild = ''
-              mkdir -p $out/share/fish/vendor_completions.d
+              mkdir -p $out/share/fish/vendor_completions.d $out/nix-support
               ${unwrapped}/bin/deploy fish-completion \
                 > $out/share/fish/vendor_completions.d/deploy.fish
+              echo 'export XDG_DATA_DIRS='"$out"'/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}' \
+                > $out/nix-support/setup-hook
 
               wrapProgram $out/bin/deploy \
                 --prefix PATH : ${
@@ -62,6 +62,9 @@
               license = licenses.mit;
             };
           };
+        in
+        {
+          packages.default = deploy;
 
           devShells.default = pkgs.mkShellNoCC {
             packages = with pkgs; [
@@ -73,6 +76,9 @@
               age
               ssh-to-age
             ];
+            shellHook = ''
+              export XDG_DATA_DIRS="${deploy}/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+            '';
           };
         };
     };
