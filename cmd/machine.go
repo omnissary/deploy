@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -194,6 +196,12 @@ func machineInitCmd() *cli.Command {
 			if err := ensureInitrdKey(cfg, machine); err != nil {
 				return err
 			}
+			if err := ensureSecrets(cfg, machine); err != nil {
+				return err
+			}
+			if err := ensureZFSKey(cfg, machine); err != nil {
+				return err
+			}
 
 			extra, err := os.MkdirTemp("", "deploy-extra-*")
 			if err != nil {
@@ -206,12 +214,16 @@ func machineInitCmd() *cli.Command {
 				return err
 			}
 
-			// Decrypt ZFS root key into a temp file.
-			zfsKeyFile, err := decryptZFSKey(cfg, machine)
+			// Decrypt ZFS root keys into temp files, one per encrypted pool.
+			zfsKeyFiles, err := decryptZFSKeys(cfg, machine)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = os.Remove(zfsKeyFile) }()
+			defer func() {
+				for _, f := range zfsKeyFiles {
+					_ = os.Remove(f)
+				}
+			}()
 
 			// Decrypt initrd SSH keys into extra.
 			if err := prepareInitrdKeys(cfg, machine, extra); err != nil {
@@ -240,7 +252,11 @@ func machineInitCmd() *cli.Command {
 				"--kexec", kexecTarball,
 				"--no-substitute-on-destination",
 				"--extra-files", extra,
-				"--disk-encryption-keys", "/run/zfs-keys/rpool.key", zfsKeyFile,
+			)
+			for remotePath, localFile := range zfsKeyFiles {
+				args = append(args, "--disk-encryption-keys", remotePath, localFile)
+			}
+			args = append(args,
 				"--store-paths", diskoScript, toplevel,
 				"-p", fmt.Sprintf("%d", port),
 				cfg.SSHTarget(host),
@@ -675,23 +691,33 @@ func machineUnlockZFSCmd() *cli.Command {
 
 			log.Info().Str("machine", machine).Str("host", host).Int("port", initrdPort).Msg("unlocking ZFS")
 
-			key, err := sops.DecryptYAMLExtract(
-				filepath.Join(cfg.FlakeDir, "machines", machine, "secrets.yaml"),
-				"zfs-root-key",
-			)
+			pools, err := diskoEncryptedPools(cfg, machine)
 			if err != nil {
-				return errors.Wrapf(err, "decrypt zfs-root-key for %s", machine)
+				return err
+			}
+			if len(pools) == 0 {
+				log.Info().Str("machine", machine).Msg("no encrypted ZFS pools found")
+				return nil
 			}
 
 			wc := writerConfig{}
-			remoteCmd := "mkdir -p /run/zfs-keys && cat > /run/zfs-keys/rpool.key.tmp && mv /run/zfs-keys/rpool.key.tmp /run/zfs-keys/rpool.key"
-			sshArgs := append(cfg.SSHArgs(), "-p", fmt.Sprintf("%d", initrdPort), cfg.SSHTarget(host), remoteCmd)
-			cmd := exec.Command("ssh", sshArgs...)
-			cmd.Stdin = strings.NewReader(key)
-			cmd.Stdout = wc.stdout()
-			cmd.Stderr = wc.stderr()
-			if err := cmd.Run(); err != nil {
-				return errors.Wrap(err, "send zfs key via ssh")
+			for pool, remotePath := range pools {
+				secretKey := pool + "-root-key"
+				key, err := sops.DecryptYAMLExtract(secretsPath(cfg, machine), secretKey)
+				if err != nil {
+					return errors.Wrapf(err, "decrypt %s for %s", secretKey, machine)
+				}
+				remoteCmd := fmt.Sprintf("mkdir -p '%s' && cat > '%s.tmp' && mv '%s.tmp' '%s'",
+					filepath.Dir(remotePath), remotePath, remotePath, remotePath)
+				sshArgs := append(cfg.SSHArgs(), "-p", fmt.Sprintf("%d", initrdPort), cfg.SSHTarget(host), remoteCmd)
+				cmd := exec.Command("ssh", sshArgs...)
+				cmd.Stdin = strings.NewReader(key)
+				cmd.Stdout = wc.stdout()
+				cmd.Stderr = wc.stderr()
+				if err := cmd.Run(); err != nil {
+					return errors.Wrapf(err, "send %s key via ssh", pool)
+				}
+				log.Info().Str("machine", machine).Str("pool", pool).Msg("ZFS pool unlocked")
 			}
 
 			log.Info().Str("machine", machine).Msg("ZFS unlocked")
@@ -822,27 +848,96 @@ func terminateSSHControlMaster(pid int, masterErrCh <-chan error, signal syscall
 	return nil
 }
 
-func decryptZFSKey(cfg *Config, machine string) (string, error) {
-	log.Debug().Str("machine", machine).Msg("decrypting ZFS root key")
-	key, err := sops.DecryptYAMLExtract(
-		filepath.Join(cfg.FlakeDir, "machines", machine, "secrets.yaml"),
-		"zfs-root-key",
-	)
+// diskoEncryptedPools returns a map of pool name → remote key path for every
+// ZFS pool that uses file-based encryption, derived from config.disko.devices.zpool.
+// Returns an empty map when the machine does not use disko.
+func diskoEncryptedPools(cfg *Config, machine string) (map[string]string, error) {
+	raw, err := nix.EvalApply(cfg.FlakeDir, cfg.MachineAttr(machine, "config"),
+		`cfg: if cfg ? disko then cfg.disko.devices.zpool else {}`)
 	if err != nil {
-		return "", errors.Wrapf(err, "decrypt zfs-root-key for %s", machine)
+		return nil, errors.Wrapf(err, "eval disko zpool config for %s", machine)
 	}
-	f, err := os.CreateTemp("", "deploy-zfskey-*")
+	var zpools map[string]struct {
+		RootFsOptions map[string]string `json:"rootFsOptions"`
+	}
+	if err := json.Unmarshal(raw, &zpools); err != nil {
+		return nil, errors.Wrapf(err, "parse zpool config for %s", machine)
+	}
+	result := make(map[string]string)
+	for pool, z := range zpools {
+		kf := z.RootFsOptions["keyformat"]
+		kl := z.RootFsOptions["keylocation"]
+		if kf == "" || kf == "none" || !strings.HasPrefix(kl, "file://") {
+			continue
+		}
+		result[pool] = strings.TrimPrefix(kl, "file://")
+	}
+	return result, nil
+}
+
+// decryptZFSKeys decrypts the ZFS root key for every encrypted pool and writes
+// each into a temp file. Returns a map of remote path → local tmpfile path.
+func decryptZFSKeys(cfg *Config, machine string) (map[string]string, error) {
+	pools, err := diskoEncryptedPools(cfg, machine)
 	if err != nil {
-		return "", errors.Wrap(err, "create zfs key tmpfile")
+		return nil, err
 	}
-	defer f.Close()
-	if _, err := fmt.Fprint(f, key); err != nil {
-		return "", errors.Wrap(err, "write zfs key")
+	result := make(map[string]string, len(pools))
+	for pool, remotePath := range pools {
+		secretKey := pool + "-root-key"
+		log.Debug().Str("machine", machine).Str("pool", pool).Msg("decrypting ZFS root key")
+		key, err := sops.DecryptYAMLExtract(secretsPath(cfg, machine), secretKey)
+		if err != nil {
+			return nil, errors.Wrapf(err, "decrypt %s for %s", secretKey, machine)
+		}
+		f, err := os.CreateTemp("", "deploy-zfskey-*")
+		if err != nil {
+			return nil, errors.Wrap(err, "create zfs key tmpfile")
+		}
+		if _, err := fmt.Fprint(f, key); err != nil {
+			_ = f.Close()
+			return nil, errors.Wrap(err, "write zfs key")
+		}
+		if err := f.Close(); err != nil {
+			return nil, errors.Wrap(err, "close zfs key tmpfile")
+		}
+		if err := os.Chmod(f.Name(), 0o400); err != nil {
+			return nil, errors.Wrap(err, "chmod zfs key file")
+		}
+		result[remotePath] = f.Name()
 	}
-	if err := os.Chmod(f.Name(), 0o400); err != nil {
-		return "", errors.Wrap(err, "chmod zfs key file")
+	return result, nil
+}
+
+// ensureZFSKey generates and stores a ZFS root key for every encrypted pool
+// that doesn't already have one in secrets.yaml.
+func ensureZFSKey(cfg *Config, machine string) error {
+	pools, err := diskoEncryptedPools(cfg, machine)
+	if err != nil {
+		return err
 	}
-	return f.Name(), nil
+	for pool := range pools {
+		if err := ensureZFSPoolKey(cfg, machine, pool); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureZFSPoolKey(cfg *Config, machine, pool string) error {
+	secretKey := pool + "-root-key"
+	path := secretsPath(cfg, machine)
+	if _, err := sops.DecryptYAMLExtract(path, secretKey); err == nil {
+		log.Debug().Str("machine", machine).Str("pool", pool).Msg("ZFS key already present")
+		return nil
+	}
+	keyBytes := make([]byte, 32)
+	if _, err := rand.Read(keyBytes); err != nil {
+		return errors.Wrap(err, "generate ZFS key")
+	}
+	key := hex.EncodeToString(keyBytes)
+	log.Info().Str("machine", machine).Str("pool", pool).Msg("writing ZFS root key")
+	return sops.SetYAML(path, secretKey, key)
 }
 
 func prepareInitrdKeys(cfg *Config, machine, extraDir string) error {
