@@ -904,6 +904,9 @@ func decryptZFSKeys(cfg *Config, machine string) (map[string]string, error) {
 // ensureMachineSecrets idempotently provisions every key file and secrets file
 // needed to build or deploy a machine. Safe to call before any machine command.
 func ensureMachineSecrets(cfg *Config, machine string) error {
+	if err := ensureSopsConf(cfg); err != nil {
+		return err
+	}
 	if err := ensureHostKey(cfg, machine); err != nil {
 		return err
 	}

@@ -87,8 +87,8 @@ func UpsertMachineRules(confPath, flakeDir, machine, ageKey string, updateFn fun
 	if !found {
 		return false, errors.Errorf("generic sops creation rule not found: %s", vars.GenericMachineRegex)
 	}
-	if len(genericGroup.PGP) == 0 {
-		return false, errors.Errorf("generic sops rule has no PGP keys")
+	if len(genericGroup.PGP) == 0 && len(genericGroup.Age) == 0 {
+		log.Warn().Str("machine", machine).Msg("no admin keys in generic sops rule; secrets will only be readable by the machine — add admin keys with 'deploy key add --pgp'")
 	}
 
 	wantedGroup := keyGroup{
@@ -404,13 +404,10 @@ func RemoveSessionKey(confPath, flakeDir, ageKey string, updateFn func(string, s
 }
 
 // sessionEligible reports whether a rule should receive session age keys.
+// Rules with empty key groups (bootstrap state) are eligible so that a
+// freshly-created .sops.yaml immediately gains a usable recipient.
 func sessionEligible(r creationRule) bool {
-	for _, kg := range r.KeyGroups {
-		if len(kg.PGP) > 0 || len(kg.Age) > 0 {
-			return true
-		}
-	}
-	return false
+	return len(r.KeyGroups) > 0
 }
 
 // ListEncryptedFiles returns every encrypted file currently managed in the

@@ -244,6 +244,13 @@ func ensureSessionKey(cfg *Config, name string) error {
 		return errors.Wrap(err, "generate session age key")
 	}
 
+	// Register the public key as a recipient in .sops.yaml BEFORE encrypting
+	// the private key — EncryptBinary needs a matching rule with at least one
+	// recipient, which the session key itself satisfies after this call.
+	if _, err := sops.AddSessionKey(cfg.SopsConf, cfg.FlakeDir, pair.Public, sops.UpdateKeys); err != nil {
+		return errors.Wrap(err, "add session key to .sops.yaml")
+	}
+
 	encrypted, err := sops.EncryptBinary(cfg.SopsConf, privPath, []byte(pair.Private))
 	if err != nil {
 		return errors.Wrap(err, "encrypt session age key")
@@ -256,8 +263,8 @@ func ensureSessionKey(cfg *Config, name string) error {
 	}
 	log.Info().Str("name", name).Str("public", pair.Public).Msg("session key written")
 
-	if _, err := sops.AddSessionKey(cfg.SopsConf, cfg.FlakeDir, pair.Public, sops.UpdateKeys); err != nil {
-		return errors.Wrap(err, "add session key to .sops.yaml")
+	if err := appendToAgeKeysFile(pair.Private); err != nil {
+		log.Warn().Err(err).Msg("could not persist session key to age keys file; run 'deploy key session unlock' to activate it")
 	}
 
 	fmt.Printf("public: %s\n", pair.Public)
@@ -319,6 +326,23 @@ func removeSessionKey(cfg *Config, name string) error {
 	return nil
 }
 
+// ensureSopsConf creates a minimal .sops.yaml if one does not exist yet and
+// bootstraps a session age key so the workstation can immediately decrypt
+// secrets without a separate unlock step.
+func ensureSopsConf(cfg *Config) error {
+	if fileExists(cfg.SopsConf) {
+		return nil
+	}
+	log.Info().Str("path", cfg.SopsConf).Msg("creating .sops.yaml (no admin PGP; add keys with 'deploy key add --pgp')")
+	if err := os.MkdirAll(filepath.Dir(cfg.SopsConf), 0o755); err != nil {
+		return errors.Wrapf(err, "create dir for %s", cfg.SopsConf)
+	}
+	if err := sops.InitConf(cfg.SopsConf, nil); err != nil {
+		return err
+	}
+	return ensureSessionKey(cfg, "session")
+}
+
 func ensureHostKey(cfg *Config, machine string) error {
 	dir := vars.MachineHostKeyDir(cfg.FlakeDir, machine)
 	pubPath := vars.MachineHostKeyPubPath(cfg.FlakeDir, machine)
@@ -346,6 +370,16 @@ func ensureHostKey(cfg *Config, machine string) error {
 		pubLine, err := sshkey.MarshalPublicAuthorizedKey(pair, "")
 		if err != nil {
 			return err
+		}
+
+		// Derive age key now so we can set up the sops recipient rule before
+		// encrypting — the rule must exist for EncryptBinary to succeed.
+		ageKey, err := sshkey.ToAge(pubLine)
+		if err != nil {
+			return errors.Wrapf(err, "derive age key for %s", machine)
+		}
+		if _, err := sops.UpsertMachineRules(cfg.SopsConf, cfg.FlakeDir, machine, ageKey, sops.UpdateKeys); err != nil {
+			return errors.Wrapf(err, "update sops rules for %s", machine)
 		}
 
 		encrypted, err := sops.EncryptBinary(cfg.SopsConf, privPath, privPEM)
@@ -460,6 +494,33 @@ func ensureInitrdKey(cfg *Config, machine string) error {
 		fmt.Printf("public:      %s", pubLine)
 	}
 	return nil
+}
+
+func appendToAgeKeysFile(privateKey string) error {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return errors.Wrap(err, "get user config dir")
+	}
+	dir := filepath.Join(configDir, "sops", "age")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return errors.Wrapf(err, "create %s", dir)
+	}
+	keysFile := filepath.Join(dir, "keys.txt")
+	key := strings.TrimRight(privateKey, "\n")
+	if existing, err := os.ReadFile(keysFile); err == nil {
+		for _, line := range strings.Split(string(existing), "\n") {
+			if strings.TrimSpace(line) == key {
+				return nil
+			}
+		}
+	}
+	f, err := os.OpenFile(keysFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return errors.Wrapf(err, "open %s", keysFile)
+	}
+	defer f.Close()
+	_, err = fmt.Fprintf(f, "%s\n", key)
+	return errors.Wrapf(err, "write to %s", keysFile)
 }
 
 func fileExists(path string) bool {
