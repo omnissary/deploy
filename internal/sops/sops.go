@@ -220,41 +220,26 @@ func DecryptYAMLExtract(filePath, key string) (string, error) {
 	return fmt.Sprintf("%v", v), nil
 }
 
-// ListYAMLKeys decrypts a YAML secrets file and returns its top-level keys in
-// sorted order.
+// ListYAMLKeys reads an encrypted SOPS YAML file and returns its plaintext
+// top-level keys in sorted order without decrypting values.
 func ListYAMLKeys(filePath string) ([]string, error) {
 	log.Debug().Str("file", filePath).Msg("sops list yaml keys")
 
-	storesCfg := config.NewStoresConfig()
-	store := common.StoreForFormat(formats.Yaml, storesCfg)
-
-	tree, err := common.LoadEncryptedFile(store, filePath)
+	rawData, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, errors.Wrapf(err, "sops load encrypted %s", filePath)
-	}
-
-	_, err = common.DecryptTree(common.DecryptTreeOpts{
-		Tree:            tree,
-		KeyServices:     keyServices(),
-		DecryptionOrder: decryptionOrder(),
-		Cipher:          newCipher(),
-	})
-	if err != nil {
-		return nil, errors.Wrapf(err, "sops decrypt yaml %s", filePath)
-	}
-
-	plain, err := store.EmitPlainFile(tree.Branches)
-	if err != nil {
-		return nil, errors.Wrap(err, "sops emit plain yaml")
+		return nil, errors.Wrapf(err, "read %s", filePath)
 	}
 
 	var m map[string]interface{}
-	if err := yaml.Unmarshal(plain, &m); err != nil {
-		return nil, errors.Wrap(err, "parse decrypted yaml")
+	if err := yaml.Unmarshal(rawData, &m); err != nil {
+		return nil, errors.Wrap(err, "parse encrypted yaml")
 	}
 
 	keys := make([]string, 0, len(m))
 	for key := range m {
+		if key == "sops" {
+			continue
+		}
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
