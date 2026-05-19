@@ -769,8 +769,13 @@ func machineUnlockZFSCmd() *cli.Command {
 				if err != nil {
 					return errors.Wrapf(err, "decrypt %s for %s", secretKey, machine)
 				}
-				remoteCmd := fmt.Sprintf("mkdir -p '%s' && cat > '%s.tmp' && mv '%s.tmp' '%s'",
-					filepath.Dir(remotePath), remotePath, remotePath, remotePath)
+				remoteCmd := fmt.Sprintf(
+					"mkdir -p '%s' && cat > '%s.tmp' && mv '%s.tmp' '%s'",
+					filepath.Dir(remotePath),
+					remotePath,
+					remotePath,
+					remotePath,
+				)
 				sshArgs := append(cfg.SSHArgs(), "-p", fmt.Sprintf("%d", initrdPort), cfg.SSHTarget(host), remoteCmd)
 				cmd := exec.Command("ssh", sshArgs...)
 				cmd.Stdin = strings.NewReader(key)
