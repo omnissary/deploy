@@ -100,7 +100,7 @@ func runMigrations(cfg *Config, currentVersion int) error {
 		return errors.Wrap(err, "reconcile groups")
 	}
 	if err := updateAllSecrets(cfg); err != nil {
-		return errors.Wrap(err, "secret update --all")
+		return errors.Wrap(err, "update all secrets")
 	}
 	if err := verifyAllSecrets(cfg, false); err != nil {
 		return errors.Wrap(err, "secret verify")

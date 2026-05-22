@@ -53,24 +53,12 @@ func secretCmd() *cli.Command {
 		Subcommands: []*cli.Command{
 			{
 				Name:      "list",
-				Usage:     "list top-level secret keys for a target or all secret files",
+				Usage:     "list top-level secret keys; with no name, list every secret file",
 				ArgsUsage: "[<name>]",
-				Flags: []cli.Flag{
-					&cli.BoolFlag{
-						Name:  "all",
-						Usage: "list keys for all secret files",
-					},
-				},
 				Action: func(ctx *cli.Context) error {
 					cfg := getConfig(ctx)
-					if ctx.Bool("all") {
-						if ctx.NArg() != 0 {
-							return errors.New("usage: secret list --all")
-						}
+					if ctx.NArg() == 0 {
 						return listAllSecrets(cfg)
-					}
-					if ctx.NArg() < 1 {
-						return errors.New("usage: secret list <name> or secret list --all")
 					}
 					target, err := resolveSecretTarget(cfg, ctx.Args().Get(0))
 					if err != nil {
@@ -163,24 +151,12 @@ func secretCmd() *cli.Command {
 			},
 			{
 				Name:      "update",
-				Usage:     "re-encrypt secrets with the current keys from .sops.yaml",
+				Usage:     "re-encrypt secrets with current keys from .sops.yaml; with no name, update every file",
 				ArgsUsage: "[<name>]",
-				Flags: []cli.Flag{
-					&cli.BoolFlag{
-						Name:  "all",
-						Usage: "update keys for every encrypted file in the flake",
-					},
-				},
 				Action: func(ctx *cli.Context) error {
 					cfg := getConfig(ctx)
-					if ctx.Bool("all") {
-						if ctx.NArg() != 0 {
-							return errors.New("usage: secret update --all")
-						}
+					if ctx.NArg() == 0 {
 						return updateAllSecrets(cfg)
-					}
-					if ctx.NArg() < 1 {
-						return errors.New("usage: secret update <name> or secret update --all")
 					}
 					target, err := resolveSecretTarget(cfg, ctx.Args().Get(0))
 					if err != nil {
