@@ -149,14 +149,34 @@ func requireMachine(cfg *Config, value string) (string, error) {
 	return machine, nil
 }
 
-// SSHArgs returns the common SSH option flags derived from Config.
-func (c *Config) SSHArgs() []string {
+// SSHOptions returns the common SSH option values derived from Config.
+func (c *Config) SSHOptions() []string {
 	return []string{
-		"-o", "UserKnownHostsFile=" + c.KnownHosts,
-		"-o", "GlobalKnownHostsFile=/dev/null",
-		"-o", "StrictHostKeyChecking=accept-new",
-		"-o", "UpdateHostKeys=no",
+		"UserKnownHostsFile=" + c.KnownHosts,
+		"GlobalKnownHostsFile=/dev/null",
+		"StrictHostKeyChecking=accept-new",
+		"UpdateHostKeys=no",
 	}
+}
+
+// SSHArgs returns the common SSH option flags for the ssh executable.
+func (c *Config) SSHArgs() []string {
+	options := c.SSHOptions()
+	args := make([]string, 0, len(options)*2)
+	for _, option := range options {
+		args = append(args, "-o", option)
+	}
+	return args
+}
+
+// NixOSAnywhereSSHArgs returns the common SSH options in nixos-anywhere syntax.
+func (c *Config) NixOSAnywhereSSHArgs() []string {
+	options := c.SSHOptions()
+	args := make([]string, 0, len(options)*2)
+	for _, option := range options {
+		args = append(args, "--ssh-option", option)
+	}
+	return args
 }
 
 // SSHTarget returns "user@host".

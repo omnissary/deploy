@@ -72,7 +72,8 @@ deploy machine unlock <machine>            # send ZFS root key to initrd listene
 ```
 
 `init` flags: `--port` (default `22`), `--phases` (default `kexec,disko,install,reboot`),
-`--kexec-flavor` (default `zfs`), `--kexec` (explicit tarball path, skips auto-build).  
+`--kexec-flavor` (default `zfs`), `--kexec` (explicit tarball path, skips auto-build),
+`--ssh-option` (extra SSH option, repeatable, prepended to nixos-anywhere SSH calls).  
 `unlock` flag: `--initrd-port` (default `2222`).
 
 ### kexec

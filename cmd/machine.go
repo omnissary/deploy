@@ -165,6 +165,10 @@ func machineInitCmd() *cli.Command {
 				Name:  "kexec",
 				Usage: "path to kexec tarball; if empty, built from --images-flake",
 			},
+			&cli.StringSliceFlag{
+				Name:  "ssh-option",
+				Usage: "extra SSH option to prepend to nixos-anywhere SSH calls; can be repeated",
+			},
 		},
 		Action: func(ctx *cli.Context) error {
 			if ctx.NArg() < 2 {
@@ -178,6 +182,7 @@ func machineInitCmd() *cli.Command {
 			host := ctx.Args().Get(1)
 			port := ctx.Int("port")
 			phases := ctx.String("phases")
+			sshOptions := ctx.StringSlice("ssh-option")
 
 			kexecTarball := ctx.Path("kexec")
 			if kexecTarball == "" {
@@ -235,8 +240,11 @@ func machineInitCmd() *cli.Command {
 				return errors.Wrapf(err, "build toplevel for %s", machine)
 			}
 
-			sshArgs := cfg.SSHArgs()
-			args := []string{"--"}
+			args := []string{}
+			for _, option := range sshOptions {
+				args = append(args, "--ssh-option", option)
+			}
+			sshArgs := cfg.NixOSAnywhereSSHArgs()
 			args = append(args, sshArgs...)
 			args = append(args,
 				"--phases", phases,

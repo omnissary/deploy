@@ -29,11 +29,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1775087534,
-        "narHash": "sha256-91qqW8lhL7TLwgQWijoGBbiD4t7/q75KTi8NxjVmSmA=",
+        "lastModified": 1778716662,
+        "narHash": "sha256-m1Yf0wZ8j1OHjTc2UwHwyQRSnNeSgLJOd7q5Y45hzi4=",
         "owner": "hercules-ci",
         "repo": "flake-parts",
-        "rev": "3107b77cd68437b9a76194f0f7f9c55f2329ca5b",
+        "rev": "f7c1a2d347e4c52d5fb8d10cb4d94b5884e546fb",
         "type": "github"
       },
       "original": {
@@ -71,15 +71,15 @@
         ]
       },
       "locked": {
-        "lastModified": 1769079217,
-        "narHash": "sha256-R6qzhu+YJolxE2vUsPQWWwUKMbAG5nXX3pBtg8BNX38=",
-        "owner": "Enzime",
+        "lastModified": 1776950483,
+        "narHash": "sha256-ciWvxGmVY4axQSVpUpCUFM1ejHb1LyZ54TrTPeDL3aU=",
+        "owner": "a-kenji",
         "repo": "nix-vm-test",
-        "rev": "58c15f78947b431d6c206e0966500c7e9139bd2f",
+        "rev": "f02b5e1bb5bcb0dbdb60e402fa567f1ceab1af11",
         "type": "github"
       },
       "original": {
-        "owner": "Enzime",
+        "owner": "a-kenji",
         "ref": "pr-105-latest",
         "repo": "nix-vm-test",
         "type": "github"
@@ -98,17 +98,15 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1769956140,
-        "narHash": "sha256-D+RQ+DaIC/GVwv5lUs7e8jSmh8aPc77Kg/gRjaS25Zk=",
-        "owner": "nix-community",
-        "repo": "nixos-anywhere",
-        "rev": "92f82c5196a5f8588be4967e535c4cfd35e85902",
-        "type": "github"
+        "lastModified": 1779492618,
+        "narHash": "sha256-p7dvv4C4qAGdE3LVO+e+vtPb7L76/Ax/w3VzDn24F6U=",
+        "rev": "835e722926f784a07383e949c093c2339e5a7438",
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/api/v1/repos/corpix/nixos-anywhere/archive/835e722926f784a07383e949c093c2339e5a7438.tar.gz"
       },
       "original": {
-        "owner": "nix-community",
-        "repo": "nixos-anywhere",
-        "type": "github"
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/corpix/nixos-anywhere/archive/corpix.tar.gz"
       }
     },
     "nixos-images": {
@@ -123,11 +121,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1766770015,
-        "narHash": "sha256-kUmVBU+uBUPl/v3biPiWrk680b8N9rRMhtY97wsxiJc=",
+        "lastModified": 1778754897,
+        "narHash": "sha256-UlPBPrqOYTDB9g/8pUaIUzYpGgjQL/YMK3Ein6m9DkY=",
         "owner": "nix-community",
         "repo": "nixos-images",
-        "rev": "e4dba54ddb6b2ad9c6550e5baaed2fa27938a5d2",
+        "rev": "66fe34a02cc29c825fdb4ece1a79c17e8f2ade2e",
         "type": "github"
       },
       "original": {

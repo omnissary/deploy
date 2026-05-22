@@ -7,7 +7,7 @@
     flake-parts.url = "github:hercules-ci/flake-parts";
     flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
 
-    nixos-anywhere.url = "github:nix-community/nixos-anywhere";
+    nixos-anywhere.url = "tarball+https://git.tatikoma.dev/corpix/nixos-anywhere/archive/corpix.tar.gz";
     nixos-anywhere.inputs.nixpkgs.follows = "nixpkgs";
   };
 
