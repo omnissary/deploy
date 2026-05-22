@@ -161,11 +161,24 @@ func UpsertMachineRules(confPath, flakeDir, machine, ageKey string, updateFn fun
 	return changed, nil
 }
 
-// EnsureSharedRule creates or updates the .sops.yaml creation rule for the
-// shared secrets group, setting the recipients to the given machines.
+// ReconcileGroupRules makes the per-group creation rules in .sops.yaml match
+// the supplied declarative group map (typically loaded from the hosts file).
+//
+// For each (group → members) pair it ensures a creation rule exists at
+// vars/secrets/shared/<group>\.yaml$ whose recipients are: admin PGP +
+// session age keys (both inherited from the generic shared rule) + each
+// member's machine age key. Per-group rules whose group is no longer declared
+// are removed. Any existing shared secret file whose rule was changed or
+// dropped is re-encrypted with the new recipient set.
+//
 // Returns true if .sops.yaml was modified.
-func EnsureSharedRule(confPath, flakeDir, group string, machines []string, updateFn func(confPath, filePath string) error) (bool, error) {
-	log.Debug().Str("group", group).Strs("machines", machines).Msg("ensure shared sops rule")
+func ReconcileGroupRules(confPath, flakeDir string, groups map[string][]string, updateFn func(confPath, filePath string) error) (bool, error) {
+	names := make([]string, 0, len(groups))
+	for name := range groups {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	log.Debug().Strs("groups", names).Msg("reconcile group rules")
 
 	cfg, err := loadSopsYAML(confPath)
 	if err != nil {
@@ -177,86 +190,92 @@ func EnsureSharedRule(confPath, flakeDir, group string, machines []string, updat
 		return false, err
 	}
 
-	ages, err := machineAgeKeys(flakeDir, machines)
-	if err != nil {
-		return false, errors.Wrapf(err, "derive age keys for shared group %s", group)
+	desired := make(map[string]creationRule, len(groups))
+	for _, name := range names {
+		ages, err := machineAgeKeys(flakeDir, groups[name])
+		if err != nil {
+			return false, errors.Wrapf(err, "derive age keys for group %s", name)
+		}
+		regex := vars.SharedSecretsRegex(name)
+		desired[regex] = creationRule{
+			PathRegex: regex,
+			KeyGroups: []keyGroup{{
+				PGP: append([]string{}, genericGroup.PGP...),
+				Age: uniqueStrings(append(append([]string{}, genericGroup.Age...), ages...)),
+			}},
+		}
 	}
 
-	wantedGroup := keyGroup{
-		PGP: append([]string{}, genericGroup.PGP...),
-		Age: uniqueStrings(append(append([]string{}, genericGroup.Age...), ages...)),
-	}
-
-	groupRegex := vars.SharedSecretsRegex(group)
-	groupRule := creationRule{PathRegex: groupRegex, KeyGroups: []keyGroup{wantedGroup}}
-
-	idx := indexOfRule(cfg.CreationRules, groupRegex)
+	touched := map[string]struct{}{}
 	changed := false
-	switch {
-	case idx == -1:
-		cfg.CreationRules = prependBefore(cfg.CreationRules, groupRule, vars.GenericSharedRegex)
-		changed = true
-	case !rulesEqual(cfg.CreationRules[idx], groupRule):
-		cfg.CreationRules[idx] = groupRule
-		changed = true
-	}
-
-	if changed {
-		if err := writeSopsYAML(confPath, cfg); err != nil {
-			return false, err
+	kept := cfg.CreationRules[:0:0]
+	for _, r := range cfg.CreationRules {
+		group, isPerGroup := parsePerGroupSharedRegex(r.PathRegex)
+		if !isPerGroup {
+			kept = append(kept, r)
+			continue
 		}
-		log.Info().Str("group", group).Msg("updated shared rule in .sops.yaml")
-
-		path := vars.SharedSecretsPath(flakeDir, group)
-		if _, err := os.Stat(path); err == nil {
-			log.Debug().Str("file", path).Msg("sops updatekeys")
-			if err := updateFn(confPath, path); err != nil {
-				return changed, errors.Wrapf(err, "updatekeys %s", path)
-			}
+		wanted, declared := desired[r.PathRegex]
+		if !declared {
+			log.Info().Str("group", group).Msg("dropping per-group rule (no longer declared)")
+			touched[group] = struct{}{}
+			changed = true
+			continue
 		}
+		if !rulesEqual(r, wanted) {
+			r = wanted
+			touched[group] = struct{}{}
+			changed = true
+		}
+		delete(desired, r.PathRegex)
+		kept = append(kept, r)
+	}
+	cfg.CreationRules = kept
+
+	for _, name := range names {
+		regex := vars.SharedSecretsRegex(name)
+		if _, missing := desired[regex]; !missing {
+			continue
+		}
+		cfg.CreationRules = prependBefore(cfg.CreationRules, desired[regex], vars.GenericSharedRegex)
+		touched[name] = struct{}{}
+		changed = true
 	}
 
-	return changed, nil
-}
-
-// AddMachineToSharedGroup adds a machine's age key to an existing shared group
-// rule. Returns true if .sops.yaml was modified. No-op if already present.
-func AddMachineToSharedGroup(confPath, flakeDir, group, machineAgeKey string, updateFn func(confPath, filePath string) error) (bool, error) {
-	log.Debug().Str("group", group).Str("age", machineAgeKey).Msg("add machine to shared group")
-
-	cfg, err := loadSopsYAML(confPath)
-	if err != nil {
-		return false, err
-	}
-
-	groupRegex := vars.SharedSecretsRegex(group)
-	idx := indexOfRule(cfg.CreationRules, groupRegex)
-	if idx == -1 {
-		return false, errors.Errorf("shared group rule %q not found in .sops.yaml; run 'secret ensure %s --machines ...' first", group, group)
-	}
-
-	if len(cfg.CreationRules[idx].KeyGroups) == 0 {
-		return false, errors.Errorf("shared group rule %q has no key groups", group)
-	}
-	kg := cfg.CreationRules[idx].KeyGroups[0]
-	if containsStr(kg.Age, machineAgeKey) {
+	if !changed {
 		return false, nil
 	}
-
-	cfg.CreationRules[idx].KeyGroups[0].Age = uniqueStrings(append(kg.Age, machineAgeKey))
 	if err := writeSopsYAML(confPath, cfg); err != nil {
 		return false, err
 	}
-	log.Info().Str("group", group).Msg("enrolled machine in shared group in .sops.yaml")
+	log.Info().Int("groups", len(touched)).Msg("reconciled group rules in .sops.yaml")
 
-	path := vars.SharedSecretsPath(flakeDir, group)
-	if _, err := os.Stat(path); err == nil {
+	for group := range touched {
+		path := vars.SharedSecretsPath(flakeDir, group)
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
 		log.Debug().Str("file", path).Msg("sops updatekeys")
 		if err := updateFn(confPath, path); err != nil {
-			return true, errors.Wrapf(err, "updatekeys %s", path)
+			return changed, errors.Wrapf(err, "updatekeys %s", path)
 		}
 	}
-	return true, nil
+	return changed, nil
+}
+
+// parsePerGroupSharedRegex returns the group name if the given path_regex is a
+// per-group shared rule (i.e. vars/secrets/shared/<group>\.yaml$), and false
+// for the generic shared fallback rule or anything else.
+func parsePerGroupSharedRegex(regex string) (string, bool) {
+	if regex == vars.GenericSharedRegex {
+		return "", false
+	}
+	const prefix = "vars/secrets/shared/"
+	const suffix = `\.yaml$`
+	if !strings.HasPrefix(regex, prefix) || !strings.HasSuffix(regex, suffix) {
+		return "", false
+	}
+	return regex[len(prefix) : len(regex)-len(suffix)], true
 }
 
 // ListAdminKeys returns the PGP fingerprints from the generic machine secrets rule.

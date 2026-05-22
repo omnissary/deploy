@@ -285,6 +285,7 @@ func New() *cli.App {
 			hostCmd(),
 			keyCmd(),
 			secretCmd(),
+			groupCmd(),
 			machineCmd(),
 			kexecCmd(),
 			{

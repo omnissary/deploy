@@ -86,6 +86,82 @@ func TestAddSessionKeySkipsAdminRule(t *testing.T) {
 	}
 }
 
+func TestReconcileGroupRulesAddsAndPrunes(t *testing.T) {
+	t.Parallel()
+
+	flakeDir := t.TempDir()
+	confPath := filepath.Join(flakeDir, ".sops.yaml")
+	if err := InitConf(confPath, []string{testAdminPGP}); err != nil {
+		t.Fatalf("InitConf: %v", err)
+	}
+
+	// Add a per-group rule manually that the reconcile must prune away.
+	cfg, err := loadSopsYAML(confPath)
+	if err != nil {
+		t.Fatalf("loadSopsYAML: %v", err)
+	}
+	stale := creationRule{
+		PathRegex: vars.SharedSecretsRegex("stale"),
+		KeyGroups: []keyGroup{{PGP: []string{testAdminPGP}, Age: []string{"age1stale"}}},
+	}
+	cfg.CreationRules = prependBefore(cfg.CreationRules, stale, vars.GenericSharedRegex)
+	if err := writeSopsYAML(confPath, cfg); err != nil {
+		t.Fatalf("writeSopsYAML: %v", err)
+	}
+
+	changed, err := ReconcileGroupRules(confPath, flakeDir, map[string][]string{
+		"loki": {},
+	}, func(string, string) error { return nil })
+	if err != nil {
+		t.Fatalf("ReconcileGroupRules: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected ReconcileGroupRules to report a change")
+	}
+
+	cfg, err = loadSopsYAML(confPath)
+	if err != nil {
+		t.Fatalf("loadSopsYAML: %v", err)
+	}
+	if indexOfRule(cfg.CreationRules, vars.SharedSecretsRegex("stale")) != -1 {
+		t.Fatal("stale per-group rule should have been pruned")
+	}
+	lokiIdx := indexOfRule(cfg.CreationRules, vars.SharedSecretsRegex("loki"))
+	if lokiIdx == -1 {
+		t.Fatal("expected per-group rule for loki to be present")
+	}
+	genericIdx := indexOfRule(cfg.CreationRules, vars.GenericSharedRegex)
+	if genericIdx == -1 || lokiIdx > genericIdx {
+		t.Fatal("loki rule must precede the generic shared fallback")
+	}
+
+	// Reconciling with the same input should be a no-op.
+	changed, err = ReconcileGroupRules(confPath, flakeDir, map[string][]string{
+		"loki": {},
+	}, func(string, string) error { return nil })
+	if err != nil {
+		t.Fatalf("ReconcileGroupRules (idempotent): %v", err)
+	}
+	if changed {
+		t.Fatal("second reconcile should be a no-op")
+	}
+}
+
+func TestParsePerGroupSharedRegex(t *testing.T) {
+	t.Parallel()
+
+	if _, ok := parsePerGroupSharedRegex(vars.GenericSharedRegex); ok {
+		t.Fatal("generic shared rule must not be classified as per-group")
+	}
+	name, ok := parsePerGroupSharedRegex(vars.SharedSecretsRegex("loki-ca"))
+	if !ok || name != "loki-ca" {
+		t.Fatalf("expected per-group match for loki-ca, got (%q, %v)", name, ok)
+	}
+	if _, ok := parsePerGroupSharedRegex(vars.GenericMachineRegex); ok {
+		t.Fatal("machine generic rule must not be classified as per-group shared")
+	}
+}
+
 func TestRemoveAdminKeyRejectsLastRecipient(t *testing.T) {
 	t.Parallel()
 

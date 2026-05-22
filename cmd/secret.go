@@ -6,14 +6,28 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
 	"github.com/urfave/cli/v2"
 
+	"git.tatikoma.dev/corpix/deploy/internal/hosts"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
+)
+
+// secretTarget is the resolved target of a secret operation.
+type secretTarget struct {
+	name string
+	path string
+	kind targetKind
+}
+
+type targetKind int
+
+const (
+	targetMachine targetKind = iota
+	targetGroup
 )
 
 func secretValueFromInput(raw []byte) string {
@@ -28,7 +42,7 @@ func writeSecretValue(w io.Writer, value string) error {
 func secretCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "secret",
-		Usage: "manage SOPS-encrypted secrets (per-machine and shared groups)",
+		Usage: "manage SOPS-encrypted secret files for machines and groups",
 		Before: func(ctx *cli.Context) error {
 			cfg := getConfig(ctx)
 			if err := requireFlake(cfg); err != nil {
@@ -38,39 +52,8 @@ func secretCmd() *cli.Command {
 		},
 		Subcommands: []*cli.Command{
 			{
-				Name:      "ensure",
-				Usage:     "create secrets file; use --machines to create a shared group",
-				ArgsUsage: "<name>",
-				Flags: []cli.Flag{
-					&cli.StringFlag{
-						Name:  "machines",
-						Usage: "comma-separated machine list for a shared group secret",
-					},
-				},
-				Action: func(ctx *cli.Context) error {
-					if ctx.NArg() < 1 {
-						return errors.New("usage: secret ensure <name> [--machines m1,m2,...]")
-					}
-					cfg := getConfig(ctx)
-					name := ctx.Args().Get(0)
-					if machinesRaw := ctx.String("machines"); machinesRaw != "" {
-						group, err := requireSimpleName("group", name)
-						if err != nil {
-							return err
-						}
-						machines := splitNames(machinesRaw)
-						return ensureSharedSecrets(cfg, group, machines)
-					}
-					machine, err := requireMachine(cfg, name)
-					if err != nil {
-						return err
-					}
-					return ensureSecrets(cfg, machine)
-				},
-			},
-			{
 				Name:      "list",
-				Usage:     "list top-level secret keys for a name or all secret files",
+				Usage:     "list top-level secret keys for a target or all secret files",
 				ArgsUsage: "[<name>]",
 				Flags: []cli.Flag{
 					&cli.BoolFlag{
@@ -89,12 +72,14 @@ func secretCmd() *cli.Command {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: secret list <name> or secret list --all")
 					}
-					name := ctx.Args().Get(0)
-					path, err := resolveSecretPath(cfg, name)
+					target, err := resolveSecretTarget(cfg, ctx.Args().Get(0))
 					if err != nil {
 						return err
 					}
-					return listSecretFileKeys(path, name)
+					if !fileExists(target.path) {
+						return errors.Errorf("no secrets file at %s", target.path)
+					}
+					return listSecretFileKeys(target.path, target.name)
 				},
 			},
 			{
@@ -106,18 +91,49 @@ func secretCmd() *cli.Command {
 						return errors.New("usage: secret get <name> <key>")
 					}
 					cfg := getConfig(ctx)
-					name := ctx.Args().Get(0)
-					key := ctx.Args().Get(1)
-					path, err := resolveSecretPath(cfg, name)
+					target, err := resolveSecretTarget(cfg, ctx.Args().Get(0))
 					if err != nil {
 						return err
 					}
-					log.Debug().Str("name", name).Str("key", key).Msg("secret get")
-					val, err := sops.DecryptYAMLExtract(path, key)
+					key := ctx.Args().Get(1)
+					if !fileExists(target.path) {
+						return errors.Errorf("no secrets file at %s", target.path)
+					}
+					log.Debug().Str("target", target.name).Str("key", key).Msg("secret get")
+					val, err := sops.DecryptYAMLExtract(target.path, key)
 					if err != nil {
-						return errors.Wrapf(err, "get secret %s/%s", name, key)
+						return errors.Wrapf(err, "get secret %s/%s", target.name, key)
 					}
 					return writeSecretValue(os.Stdout, val)
+				},
+			},
+			{
+				Name:      "set",
+				Usage:     "read value from stdin and write it as a secret key; creates the file on first use",
+				ArgsUsage: "<name> <key>",
+				Action: func(ctx *cli.Context) error {
+					if ctx.NArg() < 2 {
+						return errors.New("usage: secret set <name> <key>")
+					}
+					cfg := getConfig(ctx)
+					target, err := resolveSecretTarget(cfg, ctx.Args().Get(0))
+					if err != nil {
+						return err
+					}
+					if err := ensureSecretFile(cfg, target); err != nil {
+						return err
+					}
+					key := ctx.Args().Get(1)
+					log.Debug().Str("target", target.name).Str("key", key).Msg("secret set")
+					raw, err := io.ReadAll(os.Stdin)
+					if err != nil {
+						return errors.Wrap(err, "read stdin")
+					}
+					if err := sops.SetYAML(target.path, key, secretValueFromInput(raw)); err != nil {
+						return errors.Wrapf(err, "set secret %s/%s", target.name, key)
+					}
+					log.Info().Str("target", target.name).Str("key", key).Msg("secret set")
+					return nil
 				},
 			},
 			{
@@ -129,71 +145,60 @@ func secretCmd() *cli.Command {
 						return errors.New("usage: secret del <name> <key>")
 					}
 					cfg := getConfig(ctx)
-					name := ctx.Args().Get(0)
-					key := ctx.Args().Get(1)
-					path, err := resolveSecretPath(cfg, name)
+					target, err := resolveSecretTarget(cfg, ctx.Args().Get(0))
 					if err != nil {
 						return err
 					}
-					log.Debug().Str("name", name).Str("key", key).Msg("secret del")
-					if err := sops.DeleteYAML(path, key); err != nil {
-						return errors.Wrapf(err, "del secret %s/%s", name, key)
-					}
-					log.Info().Str("name", name).Str("key", key).Msg("secret deleted")
-					return nil
-				},
-			},
-			{
-				Name:      "set",
-				Usage:     "read value from stdin and write it as a secret key",
-				ArgsUsage: "<name> <key>",
-				Action: func(ctx *cli.Context) error {
-					if ctx.NArg() < 2 {
-						return errors.New("usage: secret set <name> <key>")
-					}
-					cfg := getConfig(ctx)
-					name := ctx.Args().Get(0)
 					key := ctx.Args().Get(1)
-					path, err := resolveSecretPath(cfg, name)
-					if err != nil {
-						return err
+					if !fileExists(target.path) {
+						return errors.Errorf("no secrets file at %s", target.path)
 					}
-					log.Debug().Str("name", name).Str("key", key).Msg("secret set")
-					raw, err := io.ReadAll(os.Stdin)
-					if err != nil {
-						return errors.Wrap(err, "read stdin")
+					log.Debug().Str("target", target.name).Str("key", key).Msg("secret del")
+					if err := sops.DeleteYAML(target.path, key); err != nil {
+						return errors.Wrapf(err, "del secret %s/%s", target.name, key)
 					}
-					if err := sops.SetYAML(path, key, secretValueFromInput(raw)); err != nil {
-						return errors.Wrapf(err, "set secret %s/%s", name, key)
-					}
-					log.Info().Str("name", name).Str("key", key).Msg("secret set")
+					log.Info().Str("target", target.name).Str("key", key).Msg("secret deleted")
 					return nil
 				},
 			},
 			{
 				Name:      "update",
 				Usage:     "re-encrypt secrets with the current keys from .sops.yaml",
-				ArgsUsage: "<name>",
+				ArgsUsage: "[<name>]",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:  "all",
+						Usage: "update keys for every encrypted file in the flake",
+					},
+				},
 				Action: func(ctx *cli.Context) error {
-					if ctx.NArg() < 1 {
-						return errors.New("usage: secret update <name>")
-					}
 					cfg := getConfig(ctx)
-					name := ctx.Args().Get(0)
-					path, err := resolveSecretPath(cfg, name)
+					if ctx.Bool("all") {
+						if ctx.NArg() != 0 {
+							return errors.New("usage: secret update --all")
+						}
+						return updateAllSecrets(cfg)
+					}
+					if ctx.NArg() < 1 {
+						return errors.New("usage: secret update <name> or secret update --all")
+					}
+					target, err := resolveSecretTarget(cfg, ctx.Args().Get(0))
 					if err != nil {
 						return err
 					}
-					log.Info().Str("name", name).Str("file", path).Msg("updating secret keys")
-					if err := sops.UpdateKeys(cfg.SopsConf, path); err != nil {
-						return errors.Wrapf(err, "update keys for %s", name)
+					if !fileExists(target.path) {
+						return errors.Errorf("no secrets file at %s", target.path)
+					}
+					log.Info().Str("file", target.path).Msg("updating secret keys")
+					if err := sops.UpdateKeys(cfg.SopsConf, target.path); err != nil {
+						return errors.Wrapf(err, "update keys for %s", target.name)
 					}
 					return nil
 				},
 			},
 			{
 				Name:      "verify",
-				Usage:     "verify secret integrity/decryption for a name or all encrypted files",
+				Usage:     "verify secret integrity/decryption for a target or all encrypted files",
 				ArgsUsage: "[<name>]",
 				Flags: []cli.Flag{
 					&cli.BoolFlag{
@@ -206,88 +211,95 @@ func secretCmd() *cli.Command {
 					if ctx.NArg() < 1 {
 						return verifyAllSecrets(cfg, ctx.Bool("fix"))
 					}
-					name := ctx.Args().Get(0)
-					path, err := resolveSecretPath(cfg, name)
+					target, err := resolveSecretTarget(cfg, ctx.Args().Get(0))
 					if err != nil {
 						return err
 					}
-					return verifySecretFile(cfg, path, ctx.Bool("fix"))
+					if !fileExists(target.path) {
+						return errors.Errorf("no secrets file at %s", target.path)
+					}
+					return verifySecretFile(cfg, target.path, ctx.Bool("fix"))
 				},
 			},
 		},
 	}
 }
 
-// resolveSecretPath finds the secrets file for name, checking the per-machine
-// path first and the shared path second. Returns an error if neither exists.
-func resolveSecretPath(cfg *Config, name string) (string, error) {
-	if p := vars.MachineSecretsPath(cfg.FlakeDir, name); fileExists(p) {
-		return p, nil
+// resolveSecretTarget interprets name as either a group declared in the hosts
+// file (resolves to the shared secrets file) or a machine declared in the
+// flake (resolves to the per-machine secrets file). Groups win when a name
+// could match both, but 'group create' rejects collisions to keep the
+// namespace clean.
+func resolveSecretTarget(cfg *Config, raw string) (*secretTarget, error) {
+	name, err := requireSimpleName("name", raw)
+	if err != nil {
+		return nil, err
 	}
-	if p := vars.SharedSecretsPath(cfg.FlakeDir, name); fileExists(p) {
-		return p, nil
+	isGroup, err := hosts.HasGroup(cfg.HostsFile, name)
+	if err != nil {
+		return nil, err
 	}
-	return "", errors.Errorf("no secrets file found for %q; run 'secret ensure %s' first", name, name)
+	if isGroup {
+		return &secretTarget{
+			name: name,
+			path: vars.SharedSecretsPath(cfg.FlakeDir, name),
+			kind: targetGroup,
+		}, nil
+	}
+	if err := requireMachineInFlake(cfg, name); err != nil {
+		return nil, errors.Wrapf(err, "%q is neither a declared group nor a machine", name)
+	}
+	return &secretTarget{
+		name: name,
+		path: vars.MachineSecretsPath(cfg.FlakeDir, name),
+		kind: targetMachine,
+	}, nil
 }
 
-// splitNames splits a comma-separated list of names and trims whitespace.
-func splitNames(s string) []string {
-	var out []string
-	for _, part := range strings.Split(s, ",") {
-		if name := strings.TrimSpace(part); name != "" {
-			out = append(out, name)
+// ensureSecretFile creates the encrypted secrets file for the target if it
+// does not already exist. For machine targets this also generates the host
+// key (so the machine's age recipient is in place); for group targets it
+// re-syncs the per-group .sops.yaml rule from the hosts file.
+func ensureSecretFile(cfg *Config, target *secretTarget) error {
+	switch target.kind {
+	case targetMachine:
+		if err := ensureHostKey(cfg, target.name); err != nil {
+			return errors.Wrapf(err, "ensure host key for %s", target.name)
 		}
+		return createEncryptedYAMLIfMissing(cfg, target.path, "machine", target.name)
+	case targetGroup:
+		if err := reconcileGroups(cfg); err != nil {
+			return errors.Wrap(err, "reconcile groups before creating shared secret")
+		}
+		return createEncryptedYAMLIfMissing(cfg, target.path, "group", target.name)
+	default:
+		return errors.Errorf("unknown target kind %d", target.kind)
 	}
-	return out
+}
+
+func createEncryptedYAMLIfMissing(cfg *Config, path, kind, name string) error {
+	if _, err := os.Stat(path); err == nil {
+		log.Debug().Str(kind, name).Msg("secrets file already exists")
+		return nil
+	}
+	log.Info().Str(kind, name).Str("file", path).Msg("creating secrets file")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return errors.Wrapf(err, "create dir for %s", path)
+	}
+	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+		return errors.Wrapf(err, "write empty secrets for %s", name)
+	}
+	if err := sops.EncryptYAML(cfg.SopsConf, path); err != nil {
+		return errors.Wrapf(err, "encrypt secrets for %s", name)
+	}
+	return nil
 }
 
 func ensureSecrets(cfg *Config, machine string) error {
 	if err := ensureHostKey(cfg, machine); err != nil {
 		return errors.Wrapf(err, "ensure host key for %s", machine)
 	}
-
-	path := vars.MachineSecretsPath(cfg.FlakeDir, machine)
-	if _, err := os.Stat(path); err == nil {
-		log.Debug().Str("machine", machine).Msg("secrets.yaml already exists")
-		return nil
-	}
-
-	log.Info().Str("machine", machine).Str("file", path).Msg("creating secrets file")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return errors.Wrapf(err, "create machine dir for %s", machine)
-	}
-	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
-		return errors.Wrapf(err, "write empty secrets for %s", machine)
-	}
-	if err := sops.EncryptYAML(cfg.SopsConf, path); err != nil {
-		return errors.Wrapf(err, "encrypt secrets for %s", machine)
-	}
-	return nil
-}
-
-func ensureSharedSecrets(cfg *Config, group string, machines []string) error {
-	path := vars.SharedSecretsPath(cfg.FlakeDir, group)
-
-	if _, err := sops.EnsureSharedRule(cfg.SopsConf, cfg.FlakeDir, group, machines, sops.UpdateKeys); err != nil {
-		return errors.Wrapf(err, "sync shared sops rule for %s", group)
-	}
-
-	if _, err := os.Stat(path); err == nil {
-		log.Debug().Str("group", group).Msg("shared secrets.yaml already exists")
-		return nil
-	}
-
-	log.Info().Str("group", group).Str("file", path).Msg("creating shared secrets file")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return errors.Wrapf(err, "create shared dir for %s", group)
-	}
-	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
-		return errors.Wrapf(err, "write empty shared secrets for %s", group)
-	}
-	if err := sops.EncryptYAML(cfg.SopsConf, path); err != nil {
-		return errors.Wrapf(err, "encrypt shared secrets for %s", group)
-	}
-	return nil
+	return createEncryptedYAMLIfMissing(cfg, vars.MachineSecretsPath(cfg.FlakeDir, machine), "machine", machine)
 }
 
 func verifySecretFile(cfg *Config, path string, fix bool) error {
@@ -351,6 +363,29 @@ func verifyAllSecrets(cfg *Config, fix bool) error {
 			Int("total", len(paths)).
 			Str("file", path).
 			Msg("secret verified")
+	}
+	return nil
+}
+
+func updateAllSecrets(cfg *Config) error {
+	if err := reconcileGroups(cfg); err != nil {
+		return err
+	}
+	paths := sops.ListEncryptedFiles(cfg.FlakeDir)
+	sort.Strings(paths)
+	if len(paths) == 0 {
+		log.Info().Msg("no encrypted files found")
+		return nil
+	}
+	for i, path := range paths {
+		log.Info().
+			Int("index", i+1).
+			Int("total", len(paths)).
+			Str("file", path).
+			Msg("updating secret keys")
+		if err := sops.UpdateKeys(cfg.SopsConf, path); err != nil {
+			return errors.Wrapf(err, "update keys for %s", path)
+		}
 	}
 	return nil
 }

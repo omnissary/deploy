@@ -71,6 +71,7 @@
               go
               gopls
               gotools
+              gofumpt
 
               sops
               age

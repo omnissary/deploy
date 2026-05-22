@@ -21,7 +21,6 @@ import (
 	"git.tatikoma.dev/corpix/deploy/internal/hosts"
 	"git.tatikoma.dev/corpix/deploy/internal/nix"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
-	"git.tatikoma.dev/corpix/deploy/internal/sshkey"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
 )
 
@@ -266,7 +265,7 @@ func machineInitCmd() *cli.Command {
 				return errors.Wrap(err, "nixos-anywhere")
 			}
 
-			if err := hosts.Set(cfg.HostsFile, machine, host); err != nil {
+			if err := hosts.SetAddress(cfg.HostsFile, machine, host); err != nil {
 				return errors.Wrapf(err, "register host for %s", machine)
 			}
 			log.Info().Str("machine", machine).Str("host", host).Msg("machine initialised")
@@ -512,12 +511,12 @@ func machineDeployCmd() *cli.Command {
 			hostFor := make(map[string]string, len(machines))
 			for _, machine := range machines {
 				if hostOverride != "" {
-					if err := hosts.Set(cfg.HostsFile, machine, hostOverride); err != nil {
+					if err := hosts.SetAddress(cfg.HostsFile, machine, hostOverride); err != nil {
 						return errors.Wrapf(err, "register host for %s", machine)
 					}
 					hostFor[machine] = hostOverride
 				} else {
-					h, err := hosts.Get(cfg.HostsFile, machine)
+					h, err := hosts.GetAddress(cfg.HostsFile, machine)
 					if err != nil {
 						return errors.Wrapf(err, "get host for %s", machine)
 					}
@@ -694,7 +693,7 @@ func machineSSHCmd() *cli.Command {
 				return err
 			}
 
-			host, err := hosts.Get(cfg.HostsFile, machine)
+			host, err := hosts.GetAddress(cfg.HostsFile, machine)
 			if err != nil {
 				return errors.Wrapf(err, "get host for %s", machine)
 			}
@@ -743,7 +742,7 @@ func machineUnlockZFSCmd() *cli.Command {
 
 			initrdPort := ctx.Int("initrd-port")
 
-			host, err := hosts.Get(cfg.HostsFile, machine)
+			host, err := hosts.GetAddress(cfg.HostsFile, machine)
 			if err != nil {
 				return errors.Wrapf(err, "get host for %s", machine)
 			}
@@ -995,8 +994,8 @@ func ensureMachineSecrets(cfg *Config, machine string) error {
 	if err := ensureSecrets(cfg, machine); err != nil {
 		return err
 	}
-	if err := enrollInSharedSecrets(cfg, machine); err != nil {
-		return err
+	if err := reconcileGroups(cfg); err != nil {
+		return errors.Wrap(err, "reconcile group rules")
 	}
 	return ensureZFSKey(cfg, machine)
 }
@@ -1011,71 +1010,6 @@ func ensureZFSKey(cfg *Config, machine string) error {
 	for pool := range pools {
 		if err := ensureZFSPoolKey(cfg, machine, pool); err != nil {
 			return err
-		}
-	}
-	return nil
-}
-
-// enrollInSharedSecrets adds the machine to any shared secret groups that its
-// NixOS config references via sops.secrets.*.sopsFile.
-func enrollInSharedSecrets(cfg *Config, machine string) error {
-	raw, err := nix.EvalApply(
-		cfg.FlakeDir, cfg.MachineAttr(machine, "config"),
-		`cfg: with builtins; map (s: s.sopsFile) (attrValues cfg.sops.secrets)`,
-	)
-	if err != nil {
-		return errors.Wrapf(err, "eval sops secrets for %s", machine)
-	}
-	var absPaths []string
-	if err := json.Unmarshal(raw, &absPaths); err != nil {
-		return errors.Wrapf(err, "parse sops secret paths for %s", machine)
-	}
-	if len(absPaths) == 0 {
-		return nil
-	}
-
-	pubPath := vars.MachineHostKeyPubPath(cfg.FlakeDir, machine)
-	pub, err := os.ReadFile(pubPath)
-	if err != nil {
-		return errors.Wrapf(err, "read host public key for %s", machine)
-	}
-	machineAge, err := sshkey.ToAge(pub)
-	if err != nil {
-		return errors.Wrapf(err, "derive age key for %s", machine)
-	}
-
-	sharedDir := vars.SharedSecretsDir(cfg.FlakeDir)
-	entries, err := os.ReadDir(sharedDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return errors.Wrapf(err, "read shared secrets dir")
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
-			continue
-		}
-		name := entry.Name()
-		group := name[:len(name)-len(".yaml")]
-		sharedPath := vars.SharedSecretsPath(cfg.FlakeDir, group)
-		if !fileExists(sharedPath) {
-			continue
-		}
-		suffix := vars.SharedSecretsPathSuffix(group)
-		referenced := false
-		for _, p := range absPaths {
-			if strings.HasSuffix(p, suffix) {
-				referenced = true
-				break
-			}
-		}
-		if !referenced {
-			continue
-		}
-		log.Info().Str("machine", machine).Str("group", group).Msg("enrolling machine in shared secrets")
-		if _, err := sops.AddMachineToSharedGroup(cfg.SopsConf, cfg.FlakeDir, group, machineAge, sops.UpdateKeys); err != nil {
-			return errors.Wrapf(err, "enroll %s in shared group %s", machine, group)
 		}
 	}
 	return nil

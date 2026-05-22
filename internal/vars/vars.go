@@ -102,12 +102,6 @@ func AdminGlob(flakeDir string) string {
 	return filepath.Join(flakeDir, segAdmin, "*")
 }
 
-// SharedSecretsPathSuffix returns the trailing path segment used to test whether
-// a Nix-evaluated sopsFile absolute path belongs to the named shared group.
-func SharedSecretsPathSuffix(group string) string {
-	return "/" + segSecrets + "/" + segShared + "/" + group + ".yaml"
-}
-
 // MachineFiles returns the absolute paths of the encrypted files belonging to a
 // machine. Used by UpsertMachineRules to re-key after a rule change.
 func MachineFiles(flakeDir, machine string) []string {
