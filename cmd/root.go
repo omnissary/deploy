@@ -286,6 +286,7 @@ func New() *cli.App {
 			keyCmd(),
 			secretCmd(),
 			groupCmd(),
+			migrateCmd(),
 			machineCmd(),
 			kexecCmd(),
 			{

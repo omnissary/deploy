@@ -169,13 +169,6 @@ func groupCmd() *cli.Command {
 					return reconcileGroups(cfg)
 				},
 			},
-			{
-				Name:  "reconcile",
-				Usage: "regenerate .sops.yaml per-group rules from the hosts file and re-encrypt affected files",
-				Action: func(ctx *cli.Context) error {
-					return reconcileGroups(getConfig(ctx))
-				},
-			},
 		},
 	}
 }
