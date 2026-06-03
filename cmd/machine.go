@@ -624,6 +624,8 @@ func deployMachine(cfg *Config, machine, targetHost string, nixc *nix.Client, wc
 		"  ControlMaster auto",
 		"  ControlPath " + controlPath,
 		"  ControlPersist 10m",
+		"  ServerAliveInterval 60",
+		"  ServerAliveCountMax 10",
 		"",
 	}, "\n")
 	if err := os.WriteFile(sshConfigPath, []byte(sshConfig), 0o600); err != nil {
