@@ -20,9 +20,11 @@ func TestLoadAcceptsLegacyFlatFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	want := map[string]string{"alexandria": "10.94.10.1", "ares": "200:dffb::1"}
-	if !reflect.DeepEqual(f.Addresses, want) {
-		t.Fatalf("Addresses: got %v want %v", f.Addresses, want)
+	if got, want := f.Addresses["alexandria"].Default, "10.94.10.1"; got != want {
+		t.Fatalf("Addresses[alexandria].Default = %q want %q", got, want)
+	}
+	if got, want := f.Addresses["ares"].Default, "200:dffb::1"; got != want {
+		t.Fatalf("Addresses[ares].Default = %q want %q", got, want)
 	}
 	if len(f.Groups) != 0 {
 		t.Fatalf("Groups: expected empty, got %v", f.Groups)
@@ -34,8 +36,10 @@ func TestSaveAndLoadStructured(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "hosts")
 	in := &File{
-		Addresses: map[string]string{"pegasus": "10.94.10.3"},
-		Groups:    map[string][]string{"dns": {"pegasus", "ares", "pegasus"}},
+		Addresses: map[string]*AddressEntry{
+			"pegasus": {Default: "10.94.10.3"},
+		},
+		Groups: map[string][]string{"dns": {"pegasus", "ares", "pegasus"}},
 	}
 	if err := Save(path, in); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -45,11 +49,96 @@ func TestSaveAndLoadStructured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got, want := out.Addresses["pegasus"], "10.94.10.3"; got != want {
-		t.Fatalf("Addresses[pegasus] = %q want %q", got, want)
+	if got, want := out.Addresses["pegasus"].Default, "10.94.10.3"; got != want {
+		t.Fatalf("Addresses[pegasus].Default = %q want %q", got, want)
 	}
 	if got, want := out.Groups["dns"], []string{"ares", "pegasus"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("Groups[dns] = %v want %v", got, want)
+	}
+}
+
+func TestTaggedAddressRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "hosts")
+	in := &File{
+		Addresses: map[string]*AddressEntry{
+			"ares": {
+				Default: "10.0.0.1",
+				Tags:    map[string]string{"unlock": "5.6.7.8"},
+			},
+		},
+	}
+	if err := Save(path, in); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	out, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	entry := out.Addresses["ares"]
+	if entry == nil {
+		t.Fatal("Addresses[ares] is nil")
+	}
+	if got, want := entry.Default, "10.0.0.1"; got != want {
+		t.Fatalf("Default = %q want %q", got, want)
+	}
+	if got, want := entry.Tags["unlock"], "5.6.7.8"; got != want {
+		t.Fatalf("Tags[unlock] = %q want %q", got, want)
+	}
+}
+
+func TestTaggedAddressFallback(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "hosts")
+	if err := SetAddress(path, "zeus", "", "192.168.1.1"); err != nil {
+		t.Fatalf("SetAddress default: %v", err)
+	}
+
+	addr, err := GetAddress(path, "zeus", "ssh")
+	if err != nil {
+		t.Fatalf("GetAddress ssh: %v", err)
+	}
+	if got, want := addr, "192.168.1.1"; got != want {
+		t.Fatalf("GetAddress(ssh) = %q want %q (expected fallback to default)", got, want)
+	}
+
+	addr, err = GetAddress(path, "zeus", "unlock")
+	if err != nil {
+		t.Fatalf("GetAddress unlock: %v", err)
+	}
+	if got, want := addr, "192.168.1.1"; got != want {
+		t.Fatalf("GetAddress(unlock) = %q want %q (expected fallback to default)", got, want)
+	}
+}
+
+func TestTaggedAddressOverridesDefault(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "hosts")
+	if err := SetAddress(path, "zeus", "", "10.0.0.1"); err != nil {
+		t.Fatalf("SetAddress default: %v", err)
+	}
+	if err := SetAddress(path, "zeus", "unlock", "1.2.3.4"); err != nil {
+		t.Fatalf("SetAddress unlock: %v", err)
+	}
+
+	ssh, err := GetAddress(path, "zeus", "ssh")
+	if err != nil {
+		t.Fatalf("GetAddress ssh: %v", err)
+	}
+	if got, want := ssh, "10.0.0.1"; got != want {
+		t.Fatalf("GetAddress(ssh) = %q want %q", got, want)
+	}
+
+	unlock, err := GetAddress(path, "zeus", "unlock")
+	if err != nil {
+		t.Fatalf("GetAddress unlock: %v", err)
+	}
+	if got, want := unlock, "1.2.3.4"; got != want {
+		t.Fatalf("GetAddress(unlock) = %q want %q", got, want)
 	}
 }
 

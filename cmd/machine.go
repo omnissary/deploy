@@ -273,7 +273,7 @@ func machineInitCmd() *cli.Command {
 				return errors.Wrap(err, "nixos-anywhere")
 			}
 
-			if err := hosts.SetAddress(cfg.HostsFile, machine, host); err != nil {
+			if err := hosts.SetAddress(cfg.HostsFile, machine, "", host); err != nil {
 				return errors.Wrapf(err, "register host for %s", machine)
 			}
 			log.Info().Str("machine", machine).Str("host", host).Msg("machine initialised")
@@ -519,12 +519,12 @@ func machineDeployCmd() *cli.Command {
 			hostFor := make(map[string]string, len(machines))
 			for _, machine := range machines {
 				if hostOverride != "" {
-					if err := hosts.SetAddress(cfg.HostsFile, machine, hostOverride); err != nil {
+					if err := hosts.SetAddress(cfg.HostsFile, machine, "", hostOverride); err != nil {
 						return errors.Wrapf(err, "register host for %s", machine)
 					}
 					hostFor[machine] = hostOverride
 				} else {
-					h, err := hosts.GetAddress(cfg.HostsFile, machine)
+					h, err := hosts.GetAddress(cfg.HostsFile, machine, "ssh")
 					if err != nil {
 						return errors.Wrapf(err, "get host for %s", machine)
 					}
@@ -701,7 +701,7 @@ func machineSSHCmd() *cli.Command {
 				return err
 			}
 
-			host, err := hosts.GetAddress(cfg.HostsFile, machine)
+			host, err := hosts.GetAddress(cfg.HostsFile, machine, "ssh")
 			if err != nil {
 				return errors.Wrapf(err, "get host for %s", machine)
 			}
@@ -750,7 +750,7 @@ func machineUnlockZFSCmd() *cli.Command {
 
 			initrdPort := ctx.Int("initrd-port")
 
-			host, err := hosts.GetAddress(cfg.HostsFile, machine)
+			host, err := hosts.GetAddress(cfg.HostsFile, machine, "unlock")
 			if err != nil {
 				return errors.Wrapf(err, "get host for %s", machine)
 			}

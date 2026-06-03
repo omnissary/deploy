@@ -22,6 +22,12 @@ func hostCmd() *cli.Command {
 				Name:      "get",
 				Usage:     "print the registered address for a machine",
 				ArgsUsage: "<machine>",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:  "tag",
+						Usage: "operation tag (e.g. ssh, unlock); omit for the default address",
+					},
+				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: host get <machine>")
@@ -31,8 +37,9 @@ func hostCmd() *cli.Command {
 					if err != nil {
 						return err
 					}
-					log.Debug().Str("machine", machine).Msg("host get")
-					addr, err := hosts.GetAddress(cfg.HostsFile, machine)
+					tag := ctx.String("tag")
+					log.Debug().Str("machine", machine).Str("tag", tag).Msg("host get")
+					addr, err := hosts.GetAddress(cfg.HostsFile, machine, tag)
 					if err != nil {
 						return errors.Wrapf(err, "get address for %s", machine)
 					}
@@ -44,6 +51,12 @@ func hostCmd() *cli.Command {
 				Name:      "set",
 				Usage:     "register an address for a machine",
 				ArgsUsage: "<machine> <addr>",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:  "tag",
+						Usage: "operation tag (e.g. ssh, unlock); omit to set the default address",
+					},
+				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.NArg() < 2 {
 						return errors.New("usage: host set <machine> <addr>")
@@ -54,8 +67,9 @@ func hostCmd() *cli.Command {
 						return err
 					}
 					addr := ctx.Args().Get(1)
-					log.Info().Str("machine", machine).Str("addr", addr).Msg("registering host")
-					if err := hosts.SetAddress(cfg.HostsFile, machine, addr); err != nil {
+					tag := ctx.String("tag")
+					log.Info().Str("machine", machine).Str("tag", tag).Str("addr", addr).Msg("registering host")
+					if err := hosts.SetAddress(cfg.HostsFile, machine, tag, addr); err != nil {
 						return errors.Wrapf(err, "set address for %s", machine)
 					}
 					return nil

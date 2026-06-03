@@ -5,8 +5,11 @@
 // On-disk format:
 //
 //	addresses:
-//	  alexandria: 10.94.10.1
-//	  ares: 200:dffb:...
+//	  alexandria: 10.94.10.1          # plain address, used for any operation
+//	  ares:
+//	    ssh: 200:dffb::1              # used by machine ssh / deploy
+//	    unlock: 5.6.7.8              # used by machine unlock
+//	    default: 200:dffb::1         # optional fallback for untagged operations
 //	groups:
 //	  loki-ca: [alexandria, ares]
 //
@@ -15,6 +18,7 @@
 package hosts
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -24,14 +28,69 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// AddressEntry holds either a plain address (Default) or per-operation tagged
+// addresses, or both. A plain YAML scalar unmarshals into Default; a mapping
+// unmarshals into Tags (with an optional "default" key populating Default).
+type AddressEntry struct {
+	Default string
+	Tags    map[string]string
+}
+
+// Get returns the address for the given operation tag. If the tag is not found
+// in Tags, Default is returned.
+func (e *AddressEntry) Get(tag string) string {
+	if e == nil {
+		return ""
+	}
+	if tag != "" {
+		if addr, ok := e.Tags[tag]; ok {
+			return addr
+		}
+	}
+	return e.Default
+}
+
+func (e *AddressEntry) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		return value.Decode(&e.Default)
+	case yaml.MappingNode:
+		var m map[string]string
+		if err := value.Decode(&m); err != nil {
+			return err
+		}
+		e.Default = m["default"]
+		delete(m, "default")
+		e.Tags = m
+		return nil
+	default:
+		return fmt.Errorf("address: unexpected YAML node kind %v", value.Kind)
+	}
+}
+
+func (e AddressEntry) MarshalYAML() (interface{}, error) {
+	if len(e.Tags) == 0 {
+		return e.Default, nil
+	}
+	m := make(map[string]string, len(e.Tags)+1)
+	for k, v := range e.Tags {
+		m[k] = v
+	}
+	if e.Default != "" {
+		m["default"] = e.Default
+	}
+	return m, nil
+}
+
 // File is the parsed contents of the hosts registry.
 type File struct {
-	Addresses map[string]string   `yaml:"addresses,omitempty"`
-	Groups    map[string][]string `yaml:"groups,omitempty"`
+	Addresses map[string]*AddressEntry `yaml:"addresses,omitempty"`
+	Groups    map[string][]string      `yaml:"groups,omitempty"`
 }
 
 // Load reads and parses the hosts file. Missing files are treated as empty.
-// Accepts both the structured format and the legacy flat machine:addr map.
+// Accepts the structured format, a tagged-address format, and the legacy flat
+// machine:addr map.
 func Load(path string) (*File, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -52,7 +111,11 @@ func Load(path string) (*File, error) {
 	if err := yaml.Unmarshal(data, &legacy); err != nil {
 		return nil, errors.Wrapf(err, "parse hosts file %s", path)
 	}
-	return normalize(&File{Addresses: legacy}), nil
+	addrs := make(map[string]*AddressEntry, len(legacy))
+	for k, v := range legacy {
+		addrs[k] = &AddressEntry{Default: v}
+	}
+	return normalize(&File{Addresses: addrs}), nil
 }
 
 // Save writes the hosts file atomically with stable, sorted output.
@@ -76,34 +139,50 @@ func Save(path string, f *File) error {
 	return nil
 }
 
-// GetAddress returns the registered address for a machine (empty if unset).
-func GetAddress(path, machine string) (string, error) {
+// GetAddress returns the address for a machine and operation tag. If tag is
+// empty or not present in the machine's tag map, the plain default address is
+// returned. Returns an empty string when no address is registered.
+func GetAddress(path, machine, tag string) (string, error) {
 	f, err := Load(path)
 	if err != nil {
 		return "", err
 	}
-	return f.Addresses[machine], nil
+	return f.Addresses[machine].Get(tag), nil
 }
 
-// SetAddress registers or updates the address for a machine.
-func SetAddress(path, machine, addr string) error {
-	log.Debug().Str("machine", machine).Str("addr", addr).Str("file", path).Msg("setting address")
+// SetAddress registers or updates an address for a machine. Pass an empty tag
+// to set the plain default address; pass a tag name to set an operation-specific
+// address.
+func SetAddress(path, machine, tag, addr string) error {
+	log.Debug().Str("machine", machine).Str("tag", tag).Str("addr", addr).Str("file", path).Msg("setting address")
 	f, err := Load(path)
 	if err != nil {
 		return err
 	}
-	f.Addresses[machine] = addr
+	entry := f.Addresses[machine]
+	if entry == nil {
+		entry = &AddressEntry{}
+		f.Addresses[machine] = entry
+	}
+	if tag == "" {
+		entry.Default = addr
+	} else {
+		if entry.Tags == nil {
+			entry.Tags = map[string]string{}
+		}
+		entry.Tags[tag] = addr
+	}
 	return Save(path, f)
 }
 
-// HasAddress reports whether the named machine has a registered address.
+// HasAddress reports whether the named machine has any registered address.
 func HasAddress(path, machine string) (bool, error) {
 	f, err := Load(path)
 	if err != nil {
 		return false, err
 	}
-	_, ok := f.Addresses[machine]
-	return ok, nil
+	entry := f.Addresses[machine]
+	return entry != nil && (entry.Default != "" || len(entry.Tags) > 0), nil
 }
 
 // Groups returns a deep copy of all declared groups.
@@ -216,7 +295,7 @@ func DeleteGroup(path, group string) error {
 
 func empty() *File {
 	return &File{
-		Addresses: map[string]string{},
+		Addresses: map[string]*AddressEntry{},
 		Groups:    map[string][]string{},
 	}
 }
@@ -226,7 +305,7 @@ func normalize(f *File) *File {
 		return empty()
 	}
 	if f.Addresses == nil {
-		f.Addresses = map[string]string{}
+		f.Addresses = map[string]*AddressEntry{}
 	}
 	if f.Groups == nil {
 		f.Groups = map[string][]string{}
