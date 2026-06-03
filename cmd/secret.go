@@ -30,6 +30,16 @@ const (
 	targetGroup
 )
 
+// Argument positions for secret subcommand BashComplete functions.
+// ctx.NArg() equals the number of positional args already on the command line,
+// which is the 0-based index of the argument currently being completed.
+const (
+	secretArgTarget    = 0
+	secretArgKey       = 1
+	secretArgDstTarget = 2
+	secretArgDstKey    = 3
+)
+
 func secretValueFromInput(raw []byte) string {
 	return string(raw)
 }
@@ -55,6 +65,15 @@ func secretCmd() *cli.Command {
 				Name:      "list",
 				Usage:     "list top-level secret keys; with no name, list every secret file",
 				ArgsUsage: "[<name>]",
+				BashComplete: func(ctx *cli.Context) {
+					if ctx.NArg() > secretArgTarget {
+						return
+					}
+					cfg := completionConfig(ctx)
+					for _, name := range completionExistingTargetNames(cfg) {
+						fmt.Fprintln(ctx.App.Writer, name)
+					}
+				},
 				Action: func(ctx *cli.Context) error {
 					cfg := getConfig(ctx)
 					if ctx.NArg() == 0 {
@@ -74,6 +93,19 @@ func secretCmd() *cli.Command {
 				Name:      "get",
 				Usage:     "decrypt and print the value of a secret key",
 				ArgsUsage: "<name> <key>",
+				BashComplete: func(ctx *cli.Context) {
+					cfg := completionConfig(ctx)
+					switch ctx.NArg() {
+					case secretArgTarget:
+						for _, name := range completionTargetNames(cfg) {
+							fmt.Fprintln(ctx.App.Writer, name)
+						}
+					case secretArgKey:
+						for _, key := range completionTargetKeys(cfg, ctx.Args().Get(secretArgTarget)) {
+							fmt.Fprintln(ctx.App.Writer, key)
+						}
+					}
+				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.NArg() < 2 {
 						return errors.New("usage: secret get <name> <key>")
@@ -99,6 +131,19 @@ func secretCmd() *cli.Command {
 				Name:      "set",
 				Usage:     "read value from stdin and write it as a secret key; creates the file on first use",
 				ArgsUsage: "<name> <key>",
+				BashComplete: func(ctx *cli.Context) {
+					cfg := completionConfig(ctx)
+					switch ctx.NArg() {
+					case secretArgTarget:
+						for _, name := range completionTargetNames(cfg) {
+							fmt.Fprintln(ctx.App.Writer, name)
+						}
+					case secretArgKey:
+						for _, key := range completionTargetKeys(cfg, ctx.Args().Get(secretArgTarget)) {
+							fmt.Fprintln(ctx.App.Writer, key)
+						}
+					}
+				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.NArg() < 2 {
 						return errors.New("usage: secret set <name> <key>")
@@ -128,6 +173,19 @@ func secretCmd() *cli.Command {
 				Name:      "del",
 				Usage:     "delete a secret key",
 				ArgsUsage: "<name> <key>",
+				BashComplete: func(ctx *cli.Context) {
+					cfg := completionConfig(ctx)
+					switch ctx.NArg() {
+					case secretArgTarget:
+						for _, name := range completionExistingTargetNames(cfg) {
+							fmt.Fprintln(ctx.App.Writer, name)
+						}
+					case secretArgKey:
+						for _, key := range completionTargetKeys(cfg, ctx.Args().Get(secretArgTarget)) {
+							fmt.Fprintln(ctx.App.Writer, key)
+						}
+					}
+				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.NArg() < 2 {
 						return errors.New("usage: secret del <name> <key>")
@@ -153,6 +211,15 @@ func secretCmd() *cli.Command {
 				Name:      "update",
 				Usage:     "re-encrypt secrets with current keys from .sops.yaml; with no name, update every file",
 				ArgsUsage: "[<name>]",
+				BashComplete: func(ctx *cli.Context) {
+					if ctx.NArg() > secretArgTarget {
+						return
+					}
+					cfg := completionConfig(ctx)
+					for _, name := range completionExistingTargetNames(cfg) {
+						fmt.Fprintln(ctx.App.Writer, name)
+					}
+				},
 				Action: func(ctx *cli.Context) error {
 					cfg := getConfig(ctx)
 					if ctx.NArg() == 0 {
@@ -176,6 +243,27 @@ func secretCmd() *cli.Command {
 				Name:      "mv",
 				Usage:     "move a secret key from one target to another, or rename it within the same target",
 				ArgsUsage: "<src-name> <src-key> <dst-name> [<dst-key>]",
+				BashComplete: func(ctx *cli.Context) {
+					cfg := completionConfig(ctx)
+					switch ctx.NArg() {
+					case secretArgTarget:
+						for _, name := range completionTargetNames(cfg) {
+							fmt.Fprintln(ctx.App.Writer, name)
+						}
+					case secretArgKey:
+						for _, key := range completionTargetKeys(cfg, ctx.Args().Get(secretArgTarget)) {
+							fmt.Fprintln(ctx.App.Writer, key)
+						}
+					case secretArgDstTarget:
+						for _, name := range completionTargetNames(cfg) {
+							fmt.Fprintln(ctx.App.Writer, name)
+						}
+					case secretArgDstKey:
+						for _, key := range completionTargetKeys(cfg, ctx.Args().Get(secretArgDstTarget)) {
+							fmt.Fprintln(ctx.App.Writer, key)
+						}
+					}
+				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.NArg() < 3 {
 						return errors.New("usage: secret mv <src-name> <src-key> <dst-name> [<dst-key>]")
@@ -228,6 +316,15 @@ func secretCmd() *cli.Command {
 				Name:      "verify",
 				Usage:     "verify secret integrity/decryption for a target or all encrypted files",
 				ArgsUsage: "[<name>]",
+				BashComplete: func(ctx *cli.Context) {
+					if ctx.NArg() > secretArgTarget {
+						return
+					}
+					cfg := completionConfig(ctx)
+					for _, name := range completionExistingTargetNames(cfg) {
+						fmt.Fprintln(ctx.App.Writer, name)
+					}
+				},
 				Flags: []cli.Flag{
 					&cli.BoolFlag{
 						Name:  "fix",
@@ -428,6 +525,73 @@ func listSecretFileKeys(path, label string) error {
 		fmt.Printf("%s\t%s\n", label, key)
 	}
 	return nil
+}
+
+// completionTargetNames returns all names that can be used as a secret target:
+// machines and groups from the hosts file, plus basenames of existing secrets YAMLs
+// (covers machines that have secrets but no hosts-file address entry).
+// Errors are silently ignored -- completion must never fail.
+func completionTargetNames(cfg *Config) []string {
+	seen := map[string]struct{}{}
+	for _, name := range completionMachineOrGroupNames(cfg) {
+		seen[name] = struct{}{}
+	}
+	for _, pat := range []string{
+		vars.MachineSecretsGlob(cfg.FlakeDir),
+		vars.SharedSecretsGlob(cfg.FlakeDir),
+	} {
+		if matches, err := filepath.Glob(pat); err == nil {
+			for _, p := range matches {
+				base := filepath.Base(p)
+				seen[base[:len(base)-len(".yaml")]] = struct{}{}
+			}
+		}
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// completionExistingTargetNames returns only target names that have an existing
+// secrets file on disk.
+func completionExistingTargetNames(cfg *Config) []string {
+	seen := map[string]struct{}{}
+	for _, pat := range []string{
+		vars.MachineSecretsGlob(cfg.FlakeDir),
+		vars.SharedSecretsGlob(cfg.FlakeDir),
+	} {
+		if matches, err := filepath.Glob(pat); err == nil {
+			for _, p := range matches {
+				base := filepath.Base(p)
+				seen[base[:len(base)-len(".yaml")]] = struct{}{}
+			}
+		}
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// completionTargetKeys returns the top-level YAML keys in the named target's
+// secrets file. Returns nil on any error.
+func completionTargetKeys(cfg *Config, name string) []string {
+	var path string
+	if ok, err := hosts.HasGroup(cfg.HostsFile, name); err == nil && ok {
+		path = vars.SharedSecretsPath(cfg.FlakeDir, name)
+	} else {
+		path = vars.MachineSecretsPath(cfg.FlakeDir, name)
+	}
+	keys, err := sops.ListYAMLKeys(path)
+	if err != nil {
+		return nil
+	}
+	return keys
 }
 
 func listAllSecrets(cfg *Config) error {

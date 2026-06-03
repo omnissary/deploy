@@ -28,6 +28,14 @@ func keyCmd() *cli.Command {
 				Name:      "host",
 				Usage:     "ensure the openssh host key exists and is encrypted",
 				ArgsUsage: "<machine>",
+				BashComplete: func(ctx *cli.Context) {
+					cfg := completionConfig(ctx)
+					if ctx.NArg() == 0 {
+						for _, name := range completionMachineNames(cfg) {
+							fmt.Println(name)
+						}
+					}
+				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: key host <machine>")
@@ -44,6 +52,14 @@ func keyCmd() *cli.Command {
 				Name:      "initrd",
 				Usage:     "ensure the initrd SSH key exists and is encrypted",
 				ArgsUsage: "<machine>",
+				BashComplete: func(ctx *cli.Context) {
+					cfg := completionConfig(ctx)
+					if ctx.NArg() == 0 {
+						for _, name := range completionMachineNames(cfg) {
+							fmt.Println(name)
+						}
+					}
+				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: key initrd <machine>")
@@ -60,6 +76,14 @@ func keyCmd() *cli.Command {
 				Name:      "ensure",
 				Usage:     "ensure both host and initrd keys exist",
 				ArgsUsage: "<machine>",
+				BashComplete: func(ctx *cli.Context) {
+					cfg := completionConfig(ctx)
+					if ctx.NArg() == 0 {
+						for _, name := range completionMachineNames(cfg) {
+							fmt.Println(name)
+						}
+					}
+				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: key ensure <machine>")

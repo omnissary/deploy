@@ -294,6 +294,12 @@ func machineBuildCmd() *cli.Command {
 				Value: 3,
 			},
 		},
+		BashComplete: func(ctx *cli.Context) {
+			cfg := completionConfig(ctx)
+			for _, name := range completionMachineOrGroupNames(cfg) {
+				fmt.Println(name)
+			}
+		},
 		Action: func(ctx *cli.Context) error {
 			if ctx.NArg() < 1 {
 				return errors.New("usage: machine build <machine|group...>")
@@ -380,6 +386,14 @@ func machineEvalCmd() *cli.Command {
 		Name:      "eval",
 		Usage:     "evaluate a NixOS config attribute and print as YAML",
 		ArgsUsage: "<machine> <attr>",
+		BashComplete: func(ctx *cli.Context) {
+			cfg := completionConfig(ctx)
+			if ctx.NArg() == 0 {
+				for _, name := range completionMachineNames(cfg) {
+					fmt.Println(name)
+				}
+			}
+		},
 		Action: func(ctx *cli.Context) error {
 			if ctx.NArg() < 2 {
 				return errors.New("usage: machine eval <machine> <attr>")
@@ -411,6 +425,14 @@ func machineAuditCmd() *cli.Command {
 		Name:      "audit",
 		Usage:     "check system closure for accidental source leaks",
 		ArgsUsage: "<machine>",
+		BashComplete: func(ctx *cli.Context) {
+			cfg := completionConfig(ctx)
+			if ctx.NArg() == 0 {
+				for _, name := range completionMachineNames(cfg) {
+					fmt.Println(name)
+				}
+			}
+		},
 		Action: func(ctx *cli.Context) error {
 			if ctx.NArg() < 1 {
 				return errors.New("usage: machine audit <machine>")
@@ -479,6 +501,12 @@ func machineDeployCmd() *cli.Command {
 				Usage: "maximum number of concurrent deploys",
 				Value: 3,
 			},
+		},
+		BashComplete: func(ctx *cli.Context) {
+			cfg := completionConfig(ctx)
+			for _, name := range completionMachineOrGroupNames(cfg) {
+				fmt.Println(name)
+			}
 		},
 		Action: func(ctx *cli.Context) error {
 			if ctx.NArg() < 1 {
@@ -681,6 +709,14 @@ func machineSSHCmd() *cli.Command {
 		Name:      "ssh",
 		Usage:     "open an interactive SSH session to a machine",
 		ArgsUsage: "<machine>",
+		BashComplete: func(ctx *cli.Context) {
+			cfg := completionConfig(ctx)
+			if ctx.NArg() == 0 {
+				for _, name := range completionMachineNames(cfg) {
+					fmt.Println(name)
+				}
+			}
+		},
 		Action: func(ctx *cli.Context) error {
 			if ctx.NArg() < 1 {
 				return errors.New("usage: machine ssh <machine>")
@@ -724,6 +760,14 @@ func machineUnlockZFSCmd() *cli.Command {
 				Usage: "SSH port of the initrd listener",
 				Value: 2222,
 			},
+		},
+		BashComplete: func(ctx *cli.Context) {
+			cfg := completionConfig(ctx)
+			if ctx.NArg() == 0 {
+				for _, name := range completionMachineNames(cfg) {
+					fmt.Println(name)
+				}
+			}
 		},
 		Action: func(ctx *cli.Context) error {
 			if ctx.NArg() < 1 {

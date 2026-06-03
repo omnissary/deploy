@@ -52,6 +52,14 @@ func groupCmd() *cli.Command {
 				Name:      "show",
 				Usage:     "list the members of a group",
 				ArgsUsage: "<group>",
+				BashComplete: func(ctx *cli.Context) {
+					cfg := completionConfig(ctx)
+					if ctx.NArg() == 0 {
+						for _, name := range completionGroupNames(cfg) {
+							fmt.Println(name)
+						}
+					}
+				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: group show <group>")
@@ -75,6 +83,14 @@ func groupCmd() *cli.Command {
 				Name:      "create",
 				Usage:     "create a new group with the listed machines as initial members",
 				ArgsUsage: "<group> [machine...]",
+				BashComplete: func(ctx *cli.Context) {
+					cfg := completionConfig(ctx)
+					if ctx.NArg() > 0 {
+						for _, name := range completionMachineNames(cfg) {
+							fmt.Println(name)
+						}
+					}
+				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: group create <group> [machine...]")
@@ -99,6 +115,19 @@ func groupCmd() *cli.Command {
 				Name:      "add",
 				Usage:     "add one or more machines to a group",
 				ArgsUsage: "<group> <machine>...",
+				BashComplete: func(ctx *cli.Context) {
+					cfg := completionConfig(ctx)
+					switch {
+					case ctx.NArg() == 0:
+						for _, name := range completionGroupNames(cfg) {
+							fmt.Println(name)
+						}
+					default:
+						for _, name := range completionMachineNames(cfg) {
+							fmt.Println(name)
+						}
+					}
+				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.NArg() < 2 {
 						return errors.New("usage: group add <group> <machine>...")
@@ -129,6 +158,20 @@ func groupCmd() *cli.Command {
 				Name:      "remove",
 				Usage:     "remove one or more machines from a group",
 				ArgsUsage: "<group> <machine>...",
+				BashComplete: func(ctx *cli.Context) {
+					cfg := completionConfig(ctx)
+					switch {
+					case ctx.NArg() == 0:
+						for _, name := range completionGroupNames(cfg) {
+							fmt.Println(name)
+						}
+					default:
+						members, _ := hosts.GroupMembers(cfg.HostsFile, ctx.Args().Get(0))
+						for _, m := range members {
+							fmt.Println(m)
+						}
+					}
+				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.NArg() < 2 {
 						return errors.New("usage: group remove <group> <machine>...")
@@ -150,6 +193,14 @@ func groupCmd() *cli.Command {
 				Name:      "delete",
 				Usage:     "delete a group; refuses if the matching shared secrets file still exists",
 				ArgsUsage: "<group>",
+				BashComplete: func(ctx *cli.Context) {
+					cfg := completionConfig(ctx)
+					if ctx.NArg() == 0 {
+						for _, name := range completionGroupNames(cfg) {
+							fmt.Println(name)
+						}
+					}
+				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: group delete <group>")

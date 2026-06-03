@@ -28,6 +28,14 @@ func hostCmd() *cli.Command {
 						Usage: "operation tag (e.g. ssh, unlock); omit for the default address",
 					},
 				},
+				BashComplete: func(ctx *cli.Context) {
+					cfg := completionConfig(ctx)
+					if ctx.NArg() == 0 {
+						for _, name := range completionMachineNames(cfg) {
+							fmt.Println(name)
+						}
+					}
+				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: host get <machine>")
@@ -56,6 +64,14 @@ func hostCmd() *cli.Command {
 						Name:  "tag",
 						Usage: "operation tag (e.g. ssh, unlock); omit to set the default address",
 					},
+				},
+				BashComplete: func(ctx *cli.Context) {
+					cfg := completionConfig(ctx)
+					if ctx.NArg() == 0 {
+						for _, name := range completionMachineNames(cfg) {
+							fmt.Println(name)
+						}
+					}
 				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.NArg() < 2 {

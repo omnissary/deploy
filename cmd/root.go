@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"text/template"
 
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
@@ -71,8 +73,28 @@ func defaultNixBuildCores() int {
 // The rewrite covers both forms urfave/cli emits at the root level:
 //   - flag entries:    complete -c ...
 //   - command entries: complete -r -c ...
+// fishScopedCmd describes a command whose subcommand-level fish completions need
+// scoping: file suppression, static-condition patching, and dynamic argument stanzas.
+type fishScopedCmd struct {
+	Parent      string
+	Subcommands []string
+}
+
+// fishScopedCmds is the single source of truth driving all fish completion patches
+// and dynamic stanza generation. Extend this slice when new top-level commands with
+// subcommands are added.
+var fishScopedCmds = []fishScopedCmd{
+	{Parent: "secret", Subcommands: []string{"list", "get", "set", "del", "update", "mv", "verify"}},
+	{Parent: "key", Subcommands: []string{"host", "initrd", "ensure", "admin", "session"}},
+	{Parent: "machine", Subcommands: []string{"init", "build", "eval", "audit", "deploy", "ssh", "unlock"}},
+	{Parent: "group", Subcommands: []string{"list", "show", "create", "add", "remove", "delete"}},
+	{Parent: "host", Subcommands: []string{"get", "set"}},
+	{Parent: "kexec", Subcommands: []string{"debug"}},
+}
+
 func patchFishCompletionScript(script, appName string) string {
-	replacements := [][2]string{
+	// Fix urfave/cli's buggy root-level completion guard (see comment above).
+	for _, pair := range [][2]string{
 		{
 			fmt.Sprintf("complete -c %s -n '__fish_%s_no_subcommand'", appName, appName),
 			fmt.Sprintf("complete -c %s -n '__fish_use_subcommand'", appName),
@@ -81,13 +103,61 @@ func patchFishCompletionScript(script, appName string) string {
 			fmt.Sprintf("complete -r -c %s -n '__fish_%s_no_subcommand'", appName, appName),
 			fmt.Sprintf("complete -r -c %s -n '__fish_use_subcommand'", appName),
 		},
+	} {
+		script = strings.ReplaceAll(script, pair[0], pair[1])
 	}
 
-	for _, replacement := range replacements {
-		script = strings.ReplaceAll(script, replacement[0], replacement[1])
+	// Scope each command's static completions so they stop firing once a deeper
+	// subcommand token is already on the command line. Without this, urfave/cli's
+	// generated entries bleed into argument-completion contexts and show subcommand
+	// names as spurious candidates.
+	for _, cmd := range fishScopedCmds {
+		old := fmt.Sprintf("-n '__fish_seen_subcommand_from %s'", cmd.Parent)
+		new := fmt.Sprintf("-n '__fish_seen_subcommand_from %s; and not __fish_seen_subcommand_from %s'",
+			cmd.Parent, strings.Join(cmd.Subcommands, " "))
+		script = strings.ReplaceAll(script, old, new)
 	}
 
+	script += buildDynamicFishCompletions(appName)
 	return script
+}
+
+// dynamicFishCompletionsTmpl generates fish completion stanzas for argument-level
+// completion. The helper function re-invokes the binary with the current token
+// list plus --generate-bash-completion so that the Go BashComplete callbacks
+// supply dynamic candidates (machine names, group names, secret keys).
+// $t[1] re-uses the binary path as typed, so invocations via relative or
+// absolute paths work without requiring the binary to be on PATH.
+var dynamicFishCompletionsTmpl = template.Must(template.New("fish-dynamic").Parse(`
+function __fish_{{.App}}_complete_dynamic
+    set -l t (commandline -opc)
+    $t[1] $t[2..] --generate-bash-completion 2>/dev/null
+end
+{{range .Commands}}{{$p := .Parent}}
+complete -c {{$.App}} -f -n '__fish_seen_subcommand_from {{$p}}'
+{{- range .Subcommands}}
+complete -c {{$.App}} -f -n '__fish_seen_subcommand_from {{$p}}; and __fish_seen_subcommand_from {{.}}' -a "(__fish_{{$.App}}_complete_dynamic)"
+{{- end}}
+{{- end}}
+`))
+
+func buildDynamicFishCompletions(appName string) string {
+	type entry struct {
+		Parent      string
+		Subcommands []string
+	}
+	data := struct {
+		App      string
+		Commands []entry
+	}{App: appName}
+	for _, cmd := range fishScopedCmds {
+		data.Commands = append(data.Commands, entry{Parent: cmd.Parent, Subcommands: cmd.Subcommands})
+	}
+	var b bytes.Buffer
+	if err := dynamicFishCompletionsTmpl.Execute(&b, data); err != nil {
+		panic(err)
+	}
+	return b.String()
 }
 
 const configKey = "deploy.config"
@@ -96,6 +166,25 @@ var simpleNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
 func getConfig(ctx *cli.Context) *Config {
 	return ctx.App.Metadata[configKey].(*Config)
+}
+
+// completionConfig builds a minimal Config from CLI flags without any validation.
+// Used inside BashComplete functions because Before hooks are skipped during
+// shell completion -- getConfig would panic since the metadata is never populated.
+func completionConfig(ctx *cli.Context) *Config {
+	flake := ctx.Path("flake")
+	abs, _ := filepath.Abs(flake)
+	resolve := func(p string) string {
+		if filepath.IsAbs(p) {
+			return p
+		}
+		return filepath.Join(abs, p)
+	}
+	return &Config{
+		FlakeDir:  abs,
+		SopsConf:  filepath.Join(abs, ".sops.yaml"),
+		HostsFile: resolve(ctx.Path("hosts-file")),
+	}
 }
 
 func requireSimpleName(kind, value string) (string, error) {
@@ -239,8 +328,9 @@ func (c *Config) MachineAttr(machine, suffix string) string {
 
 func New() *cli.App {
 	app := &cli.App{
-		Name:  "deploy",
-		Usage: "NixOS machine management tool",
+		Name:                 "deploy",
+		Usage:                "NixOS machine management tool",
+		EnableBashCompletion: true,
 		Flags: []cli.Flag{
 			&cli.PathFlag{
 				Name:    "flake",
