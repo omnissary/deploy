@@ -13,6 +13,7 @@ import (
 
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
+	"git.tatikoma.dev/corpix/deploy/internal/hosts"
 	"git.tatikoma.dev/corpix/deploy/internal/nix"
 	"github.com/urfave/cli/v2"
 )
@@ -147,6 +148,48 @@ func requireMachine(cfg *Config, value string) (string, error) {
 		return "", err
 	}
 	return machine, nil
+}
+
+// resolveTargetMachines expands each arg to a list of validated machine names.
+// If an arg is a declared group it is replaced by its members; otherwise the
+// arg is validated as a single machine name. Duplicates are dropped (first
+// occurrence wins) so passing a group and one of its members is safe.
+func resolveTargetMachines(cfg *Config, args []string) ([]string, error) {
+	seen := make(map[string]struct{})
+	var machines []string
+	for _, arg := range args {
+		isGroup, err := hosts.HasGroup(cfg.HostsFile, arg)
+		if err != nil {
+			return nil, err
+		}
+		if isGroup {
+			members, err := hosts.GroupMembers(cfg.HostsFile, arg)
+			if err != nil {
+				return nil, errors.Wrapf(err, "expand group %q", arg)
+			}
+			for _, m := range members {
+				if _, ok := seen[m]; ok {
+					continue
+				}
+				if _, err := requireMachine(cfg, m); err != nil {
+					return nil, errors.Wrapf(err, "group %q member %q", arg, m)
+				}
+				seen[m] = struct{}{}
+				machines = append(machines, m)
+			}
+			continue
+		}
+		m, err := requireMachine(cfg, arg)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := seen[m]; ok {
+			continue
+		}
+		seen[m] = struct{}{}
+		machines = append(machines, m)
+	}
+	return machines, nil
 }
 
 // SSHOptions returns the common SSH option values derived from Config.

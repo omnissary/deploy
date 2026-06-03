@@ -285,8 +285,8 @@ func machineInitCmd() *cli.Command {
 func machineBuildCmd() *cli.Command {
 	return &cli.Command{
 		Name:      "build",
-		Usage:     "build the NixOS system toplevel",
-		ArgsUsage: "<machine...>",
+		Usage:     "build the NixOS system toplevel for one or more machines or groups",
+		ArgsUsage: "<machine|group...>",
 		Flags: []cli.Flag{
 			&cli.IntFlag{
 				Name:  "parallel",
@@ -296,19 +296,14 @@ func machineBuildCmd() *cli.Command {
 		},
 		Action: func(ctx *cli.Context) error {
 			if ctx.NArg() < 1 {
-				return errors.New("usage: machine build <machine...>")
+				return errors.New("usage: machine build <machine|group...>")
 			}
 			cfg := getConfig(ctx)
 			parallelism := ctx.Int("parallel")
 
-			machineNames := ctx.Args().Slice()
-			machines := make([]string, len(machineNames))
-			for i, name := range machineNames {
-				machine, err := requireMachine(cfg, name)
-				if err != nil {
-					return err
-				}
-				machines[i] = machine
+			machines, err := resolveTargetMachines(cfg, ctx.Args().Slice())
+			if err != nil {
+				return err
 			}
 
 			for _, machine := range machines {
@@ -471,8 +466,8 @@ func machineAuditCmd() *cli.Command {
 func machineDeployCmd() *cli.Command {
 	return &cli.Command{
 		Name:      "deploy",
-		Usage:     "deploy the NixOS configuration to one or more running machines",
-		ArgsUsage: "<machine...>",
+		Usage:     "deploy the NixOS configuration to one or more machines or groups",
+		ArgsUsage: "<machine|group...>",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "host",
@@ -487,26 +482,21 @@ func machineDeployCmd() *cli.Command {
 		},
 		Action: func(ctx *cli.Context) error {
 			if ctx.NArg() < 1 {
-				return errors.New("usage: machine deploy <machine...>")
+				return errors.New("usage: machine deploy <machine|group...>")
 			}
 			cfg := getConfig(ctx)
 			hostOverride := ctx.String("host")
 			parallelism := ctx.Int("parallel")
 
-			machineNames := ctx.Args().Slice()
-
-			if hostOverride != "" && len(machineNames) > 1 {
-				return errors.New("--host can only be used when deploying a single machine")
+			// Validate and expand all args (groups expand to their members) before
+			// starting any deploy.
+			machines, err := resolveTargetMachines(cfg, ctx.Args().Slice())
+			if err != nil {
+				return err
 			}
 
-			// Validate all machines up front before starting any deploy.
-			machines := make([]string, len(machineNames))
-			for i, name := range machineNames {
-				m, err := requireMachine(cfg, name)
-				if err != nil {
-					return err
-				}
-				machines[i] = m
+			if hostOverride != "" && len(machines) > 1 {
+				return errors.New("--host can only be used when deploying a single machine")
 			}
 
 			for _, machine := range machines {
