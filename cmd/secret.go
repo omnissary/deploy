@@ -173,6 +173,58 @@ func secretCmd() *cli.Command {
 				},
 			},
 			{
+				Name:      "mv",
+				Usage:     "move a secret key from one target to another, or rename it within the same target",
+				ArgsUsage: "<src-name> <src-key> <dst-name> [<dst-key>]",
+				Action: func(ctx *cli.Context) error {
+					if ctx.NArg() < 3 {
+						return errors.New("usage: secret mv <src-name> <src-key> <dst-name> [<dst-key>]")
+					}
+					cfg := getConfig(ctx)
+					src, err := resolveSecretTarget(cfg, ctx.Args().Get(0))
+					if err != nil {
+						return err
+					}
+					srcKey := ctx.Args().Get(1)
+					dst, err := resolveSecretTarget(cfg, ctx.Args().Get(2))
+					if err != nil {
+						return err
+					}
+					dstKey := srcKey
+					if ctx.NArg() >= 4 {
+						dstKey = ctx.Args().Get(3)
+					}
+					if src.path == dst.path && srcKey == dstKey {
+						return errors.New("source and destination are identical")
+					}
+					if !fileExists(src.path) {
+						return errors.Errorf("no secrets file at %s", src.path)
+					}
+					log.Debug().
+						Str("src", src.name).Str("src-key", srcKey).
+						Str("dst", dst.name).Str("dst-key", dstKey).
+						Msg("secret mv")
+					val, err := sops.DecryptYAMLExtract(src.path, srcKey)
+					if err != nil {
+						return errors.Wrapf(err, "read secret %s/%s", src.name, srcKey)
+					}
+					if err := ensureSecretFile(cfg, dst); err != nil {
+						return err
+					}
+					if err := sops.SetYAML(dst.path, dstKey, val); err != nil {
+						return errors.Wrapf(err, "write secret %s/%s", dst.name, dstKey)
+					}
+					if err := sops.DeleteYAML(src.path, srcKey); err != nil {
+						return errors.Wrapf(err, "delete secret %s/%s", src.name, srcKey)
+					}
+					log.Info().
+						Str("src", src.name).Str("src-key", srcKey).
+						Str("dst", dst.name).Str("dst-key", dstKey).
+						Msg("secret moved")
+					return nil
+				},
+			},
+			{
 				Name:      "verify",
 				Usage:     "verify secret integrity/decryption for a target or all encrypted files",
 				ArgsUsage: "[<name>]",
