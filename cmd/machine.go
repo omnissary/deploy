@@ -796,12 +796,12 @@ func machineUnlockZFSCmd() *cli.Command {
 
 			log.Info().Str("machine", machine).Str("host", host).Int("port", initrdPort).Msg("unlocking ZFS")
 
-			pools, err := diskoEncryptedPools(cfg, machine)
+			pools, err := encryptedZFSPools(cfg, machine)
 			if err != nil {
 				return err
 			}
 			if len(pools) == 0 {
-				log.Info().Str("machine", machine).Msg("no encrypted ZFS pools found")
+				log.Error().Str("machine", machine).Msg("no encrypted ZFS pools found (no disko or zfs-crypt configuration found)")
 				return nil
 			}
 
@@ -958,41 +958,64 @@ func terminateSSHControlMaster(pid int, masterErrCh <-chan error, signal syscall
 	return nil
 }
 
-// diskoEncryptedPools returns a map of pool name → remote key path for every
-// ZFS pool that uses file-based encryption, derived from config.disko.devices.zpool.
-// Returns an empty map when the machine does not use disko.
-func diskoEncryptedPools(cfg *Config, machine string) (map[string]string, error) {
+// encryptedZFSPools returns a map of pool name → remote key path for every
+// ZFS pool that uses file-based encryption.
+//
+// The preferred source is explicit initrd unlock metadata from
+// config.modules.zfs-crypt.pools. Disko rootFsOptions are used as a fallback for
+// machines that declare their encrypted pools through config.disko.devices.zpool.
+func encryptedZFSPools(cfg *Config, machine string) (map[string]string, error) {
 	raw, err := nix.EvalApply(cfg.FlakeDir, cfg.MachineAttr(machine, "config"), `
 		cfg:
-		if cfg ? disko
-		then builtins.mapAttrs (_: p: { inherit (p) rootFsOptions; }) cfg.disko.devices.zpool
-		else {}
+		let
+		  hasZfsCrypt =
+		    cfg ? modules
+		    && cfg.modules ? zfs-crypt
+		    && cfg.modules.zfs-crypt.enable;
+		  zfsCryptPools =
+		    if hasZfsCrypt
+		    then builtins.mapAttrs (_: p: p.keyPath) cfg.modules.zfs-crypt.pools
+		    else {};
+
+		  hasDisko =
+		    cfg ? disko
+		    && cfg.disko ? devices
+		    && cfg.disko.devices ? zpool;
+		  diskoPools =
+		    if hasDisko
+		    then builtins.listToAttrs (builtins.filter (entry: entry != null) (
+		      builtins.attrValues (builtins.mapAttrs (name: p:
+		        let
+		          opts = p.rootFsOptions or {};
+		          keyformat = opts.keyformat or "";
+		          keylocation = opts.keylocation or "";
+		        in
+		          if keyformat != "" && keyformat != "none" && builtins.substring 0 7 keylocation == "file://"
+		          then {
+		            inherit name;
+		            value = builtins.substring 7 (builtins.stringLength keylocation - 7) keylocation;
+		          }
+		          else null
+		      ) cfg.disko.devices.zpool)
+		    ))
+		    else {};
+		in
+		  diskoPools // zfsCryptPools
 	`)
 	if err != nil {
-		return nil, errors.Wrapf(err, "eval disko zpool config for %s", machine)
+		return nil, errors.Wrapf(err, "eval encrypted ZFS pool config for %s", machine)
 	}
-	var zpools map[string]struct {
-		RootFsOptions map[string]string `json:"rootFsOptions"`
+	var pools map[string]string
+	if err := json.Unmarshal(raw, &pools); err != nil {
+		return nil, errors.Wrapf(err, "parse encrypted ZFS pool config for %s", machine)
 	}
-	if err := json.Unmarshal(raw, &zpools); err != nil {
-		return nil, errors.Wrapf(err, "parse zpool config for %s", machine)
-	}
-	result := make(map[string]string)
-	for pool, z := range zpools {
-		kf := z.RootFsOptions["keyformat"]
-		kl := z.RootFsOptions["keylocation"]
-		if kf == "" || kf == "none" || !strings.HasPrefix(kl, "file://") {
-			continue
-		}
-		result[pool] = strings.TrimPrefix(kl, "file://")
-	}
-	return result, nil
+	return pools, nil
 }
 
 // decryptZFSKeys decrypts the ZFS root key for every encrypted pool and writes
 // each into a temp file. Returns a map of remote path → local tmpfile path.
 func decryptZFSKeys(cfg *Config, machine string) (map[string]string, error) {
-	pools, err := diskoEncryptedPools(cfg, machine)
+	pools, err := encryptedZFSPools(cfg, machine)
 	if err != nil {
 		return nil, err
 	}
@@ -1047,7 +1070,7 @@ func ensureMachineSecrets(cfg *Config, machine string) error {
 // ensureZFSKey generates and stores a ZFS root key for every encrypted pool
 // that doesn't already have one in secrets.yaml.
 func ensureZFSKey(cfg *Config, machine string) error {
-	pools, err := diskoEncryptedPools(cfg, machine)
+	pools, err := encryptedZFSPools(cfg, machine)
 	if err != nil {
 		return err
 	}
