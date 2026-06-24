@@ -623,7 +623,7 @@ func deployMachine(cfg *Config, machine, targetHost string, nixc *nix.Client, wc
 		"  UpdateHostKeys no",
 		"  ControlMaster auto",
 		"  ControlPath " + controlPath,
-		"  ControlPersist 10m",
+		"  ControlPersist 2h",
 		"  ServerAliveInterval 60",
 		"  ServerAliveCountMax 10",
 		"",
