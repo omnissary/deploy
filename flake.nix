@@ -12,8 +12,12 @@
   };
 
   outputs =
-    inputs@{ flake-parts, ... }:
+    inputs@{ self, flake-parts, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
+      flake.overlays.default = final: _prev: {
+        deploy = self.packages.${final.stdenv.hostPlatform.system}.default;
+      };
+
       systems = [
         "x86_64-linux"
         "aarch64-linux"
