@@ -29,11 +29,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1778716662,
-        "narHash": "sha256-m1Yf0wZ8j1OHjTc2UwHwyQRSnNeSgLJOd7q5Y45hzi4=",
+        "lastModified": 1788450739,
+        "narHash": "sha256-glZLQlzIn1fXH6PazR2iUmTo7kzzyYSshrWhLS9TqCU=",
         "owner": "hercules-ci",
         "repo": "flake-parts",
-        "rev": "f7c1a2d347e4c52d5fb8d10cb4d94b5884e546fb",
+        "rev": "31729ca8cbdb4fa927b34e5f4353e6a83f39e993",
         "type": "github"
       },
       "original": {
@@ -152,15 +152,15 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1771715841,
-        "narHash": "sha256-RM983qoxrcMTCxEaa39OW0cwX6s7AZqXPPArwhmuc9w=",
-        "rev": "014ec7a63875cfb3f43458c6e643a8d861a4aaa4",
+        "lastModified": 1788226169,
+        "narHash": "sha256-nXFJDfqVOWRF1+8Z/W4GupgaeWN6SG4nKrelmHQGKwQ=",
+        "rev": "1763304844eca67253e4b91e4a397d43a786deec",
         "type": "tarball",
-        "url": "https://git.tatikoma.dev/api/v1/repos/corpix/nixpkgs/archive/014ec7a63875cfb3f43458c6e643a8d861a4aaa4.tar.gz"
+        "url": "https://git.tatikoma.dev/api/v1/repos/corpix/nixpkgs/archive/1763304844eca67253e4b91e4a397d43a786deec.tar.gz"
       },
       "original": {
         "type": "tarball",
-        "url": "https://git.tatikoma.dev/corpix/nixpkgs/archive/v2026-02-21.950114.tar.gz"
+        "url": "https://git.tatikoma.dev/corpix/nixpkgs/archive/corpix.tar.gz"
       }
     },
     "root": {

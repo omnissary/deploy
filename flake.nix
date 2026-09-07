@@ -2,7 +2,7 @@
   description = "NixOS machine deployment CLI";
 
   inputs = {
-    nixpkgs.url = "tarball+https://git.tatikoma.dev/corpix/nixpkgs/archive/v2026-02-21.950114.tar.gz";
+    nixpkgs.url = "tarball+https://git.tatikoma.dev/corpix/nixpkgs/archive/corpix.tar.gz";
 
     flake-parts.url = "github:hercules-ci/flake-parts";
     flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
