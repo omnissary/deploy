@@ -12,10 +12,12 @@
   };
 
   outputs =
-    inputs@{ self, flake-parts, ... }:
+    inputs@{ flake-parts, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       flake.overlays.default = final: _prev: {
-        deploy = self.packages.${final.stdenv.hostPlatform.system}.default;
+        deploy = final.callPackage ./package.nix {
+          nixos-anywhere = inputs.nixos-anywhere.packages.${final.stdenv.hostPlatform.system}.default;
+        };
       };
 
       systems = [
@@ -28,43 +30,8 @@
       perSystem =
         { pkgs, system, ... }:
         let
-          unwrapped = pkgs.buildGoModule {
-            pname = "deploy-unwrapped";
-            version = "0.1.0";
-            src = pkgs.lib.fileset.toSource {
-              root = ./.;
-              fileset = pkgs.lib.fileset.gitTracked ./.;
-            };
-            vendorHash = null;
-            meta.mainProgram = "deploy";
-          };
-          deploy = pkgs.symlinkJoin {
-            name = "deploy";
-            paths = [ unwrapped ];
-            nativeBuildInputs = [ pkgs.makeWrapper ];
-            postBuild = ''
-              mkdir -p $out/share/fish/vendor_completions.d $out/nix-support
-              ${unwrapped}/bin/deploy fish-completion \
-                > $out/share/fish/vendor_completions.d/deploy.fish
-              echo 'export XDG_DATA_DIRS='"$out"'/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}' \
-                > $out/nix-support/setup-hook
-
-              wrapProgram $out/bin/deploy \
-                --prefix PATH : ${
-                  pkgs.lib.makeBinPath [
-                    pkgs.nix
-                    pkgs.openssh
-                    pkgs.cpio
-                    pkgs.ssh-to-age
-                    inputs.nixos-anywhere.packages.${system}.default
-                  ]
-                }
-            '';
-            meta = with pkgs.lib; {
-              description = "NixOS machine deployment CLI";
-              mainProgram = "deploy";
-              license = licenses.mit;
-            };
+          deploy = pkgs.callPackage ./package.nix {
+            nixos-anywhere = inputs.nixos-anywhere.packages.${system}.default;
           };
         in
         {
