@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "tarball+https://git.tatikoma.dev/corpix/nixpkgs/archive/corpix.tar.gz";
 
-    flake-parts.url = "github:hercules-ci/flake-parts";
+    flake-parts.url = "tarball+https://git.tatikoma.dev/omnixiah/flake-parts/archive/omnixiah.tar.gz";
     flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
 
     nixos-anywhere.url = "tarball+https://git.tatikoma.dev/corpix/nixos-anywhere/archive/corpix.tar.gz";
