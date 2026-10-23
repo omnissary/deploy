@@ -7,7 +7,7 @@
     flake-parts.url = "tarball+https://git.tatikoma.dev/omnixiah/flake-parts/archive/omnixiah.tar.gz";
     flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
 
-    nixos-anywhere.url = "tarball+https://git.tatikoma.dev/corpix/nixos-anywhere/archive/corpix.tar.gz";
+    nixos-anywhere.url = "tarball+https://git.tatikoma.dev/omnixiah/nixos-anywhere/archive/omnixiah.tar.gz";
     nixos-anywhere.inputs.nixpkgs.follows = "nixpkgs";
   };
 

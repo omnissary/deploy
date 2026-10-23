@@ -100,11 +100,11 @@
         "narHash": "sha256-p7dvv4C4qAGdE3LVO+e+vtPb7L76/Ax/w3VzDn24F6U=",
         "rev": "835e722926f784a07383e949c093c2339e5a7438",
         "type": "tarball",
-        "url": "https://git.tatikoma.dev/api/v1/repos/corpix/nixos-anywhere/archive/835e722926f784a07383e949c093c2339e5a7438.tar.gz"
+        "url": "https://git.tatikoma.dev/api/v1/repos/omnixiah/nixos-anywhere/archive/835e722926f784a07383e949c093c2339e5a7438.tar.gz"
       },
       "original": {
         "type": "tarball",
-        "url": "https://git.tatikoma.dev/corpix/nixos-anywhere/archive/corpix.tar.gz"
+        "url": "https://git.tatikoma.dev/omnixiah/nixos-anywhere/archive/omnixiah.tar.gz"
       }
     },
     "nixos-images": {
