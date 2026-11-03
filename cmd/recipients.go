@@ -42,6 +42,24 @@ func syncRecipients(cfg *Config, edit func(*sops.Model) error) (sops.Plan, error
 	return p, nil
 }
 
+// requireRecipientsInSync fails if .sops.yaml or any file's recipients differ
+// from the recipient model. It reads no secret material.
+func requireRecipientsInSync(cfg *Config) error {
+	m, err := loadRecipientModel(cfg)
+	if err != nil {
+		return err
+	}
+	p, err := sops.MakePlan(cfg.SopsConf, cfg.FlakeDir, m)
+	if err != nil {
+		return err
+	}
+	if !p.Empty() {
+		return errors.Errorf("sops recipients are out of date (%d file(s) to re-encrypt, rules changed: %t); run 'deploy sync' first",
+			len(p.Rekey), p.RulesChanged)
+	}
+	return nil
+}
+
 func syncAllRecipients(cfg *Config) error {
 	_, err := syncRecipients(cfg, nil)
 	return err

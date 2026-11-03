@@ -131,6 +131,7 @@ func machineCmd() *cli.Command {
 		},
 		Subcommands: []*cli.Command{
 			machineInitCmd(),
+			machineProvisionCmd(),
 			machineBuildCmd(),
 			machineEvalCmd(),
 			machineAuditCmd(),
@@ -197,7 +198,7 @@ func machineInitCmd() *cli.Command {
 
 			log.Info().Str("machine", machine).Str("host", host).Int("port", port).Msg("initialising machine")
 
-			if err := ensureMachineSecrets(cfg, machine); err != nil {
+			if err := provisionMachine(cfg, machine); err != nil {
 				return err
 			}
 
@@ -313,10 +314,8 @@ func machineBuildCmd() *cli.Command {
 				return err
 			}
 
-			for _, machine := range machines {
-				if err := ensureMachineSecrets(cfg, machine); err != nil {
-					return errors.Wrapf(err, "prepare %s", machine)
-				}
+			if err := requireMachinesProvisioned(cfg, machines...); err != nil {
+				return err
 			}
 
 			usePrefix := len(machines) > 1
@@ -404,7 +403,7 @@ func machineEvalCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			if err := ensureMachineSecrets(cfg, machine); err != nil {
+			if err := requireMachinesProvisioned(cfg, machine); err != nil {
 				return err
 			}
 
@@ -444,7 +443,7 @@ func machineAuditCmd() *cli.Command {
 				return err
 			}
 
-			if err := ensureMachineSecrets(cfg, machine); err != nil {
+			if err := requireMachinesProvisioned(cfg, machine); err != nil {
 				return err
 			}
 
@@ -528,10 +527,8 @@ func machineDeployCmd() *cli.Command {
 				return errors.New("--host can only be used when deploying a single machine")
 			}
 
-			for _, machine := range machines {
-				if err := ensureMachineSecrets(cfg, machine); err != nil {
-					return errors.Wrapf(err, "prepare %s", machine)
-				}
+			if err := requireMachinesProvisioned(cfg, machines...); err != nil {
+				return err
 			}
 
 			// Resolve and register hosts up front.
@@ -781,7 +778,7 @@ func machineUnlockZFSCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			if err := ensureMachineSecrets(cfg, machine); err != nil {
+			if err := requireMachinesProvisioned(cfg, machine); err != nil {
 				return err
 			}
 
@@ -1056,9 +1053,9 @@ func decryptZFSKeys(cfg *Config, machine string) (map[string]string, error) {
 	return result, nil
 }
 
-// ensureMachineSecrets idempotently provisions every key file and secrets file
-// needed to build or deploy a machine. Safe to call before any machine command.
-func ensureMachineSecrets(cfg *Config, machine string) error {
+// provisionMachine idempotently creates every key and secrets file a machine
+// needs and syncs recipients. It never replaces existing keys.
+func provisionMachine(cfg *Config, machine string) error {
 	if err := ensureSopsConf(cfg); err != nil {
 		return err
 	}
@@ -1072,9 +1069,67 @@ func ensureMachineSecrets(cfg *Config, machine string) error {
 		return err
 	}
 	if err := syncAllRecipients(cfg); err != nil {
-		return errors.Wrap(err, "reconcile group rules")
+		return err
 	}
 	return ensureZFSKey(cfg, machine)
+}
+
+// requireMachinesProvisioned checks, without decrypting or writing anything,
+// that each machine has its keys and secrets file and that recipients are in
+// sync.
+func requireMachinesProvisioned(cfg *Config, machines ...string) error {
+	if err := ensureSopsConf(cfg); err != nil {
+		return err
+	}
+	for _, machine := range machines {
+		var missing []string
+		for _, path := range []string{
+			vars.MachineHostKeyPath(cfg.FlakeDir, machine),
+			vars.MachineHostKeyPubPath(cfg.FlakeDir, machine),
+			vars.MachineInitrdKeyPath(cfg.FlakeDir, machine),
+			vars.MachineInitrdKeyPubPath(cfg.FlakeDir, machine),
+			vars.MachineSecretsPath(cfg.FlakeDir, machine),
+		} {
+			if !fileExists(path) {
+				missing = append(missing, relToFlake(cfg, path))
+			}
+		}
+		if len(missing) > 0 {
+			return errors.Errorf("machine %s is not provisioned (missing %s); run 'deploy machine provision %s'",
+				machine, strings.Join(missing, ", "), machine)
+		}
+	}
+	return requireRecipientsInSync(cfg)
+}
+
+func machineProvisionCmd() *cli.Command {
+	return &cli.Command{
+		Name:      "provision",
+		Usage:     "create missing host/initrd keys, secrets file and ZFS root keys, then sync recipients",
+		ArgsUsage: "<machine|group...>",
+		BashComplete: func(ctx *cli.Context) {
+			cfg := completionConfig(ctx)
+			for _, name := range completionMachineOrGroupNames(cfg) {
+				fmt.Fprintln(ctx.App.Writer, name)
+			}
+		},
+		Action: func(ctx *cli.Context) error {
+			if ctx.NArg() < 1 {
+				return errors.New("usage: machine provision <machine|group...>")
+			}
+			cfg := getConfig(ctx)
+			machines, err := resolveTargetMachines(cfg, ctx.Args().Slice())
+			if err != nil {
+				return err
+			}
+			for _, machine := range machines {
+				if err := provisionMachine(cfg, machine); err != nil {
+					return errors.Wrapf(err, "provision %s", machine)
+				}
+			}
+			return nil
+		},
+	}
 }
 
 // ensureZFSKey generates and stores a ZFS root key for every encrypted pool
