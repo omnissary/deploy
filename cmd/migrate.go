@@ -96,11 +96,8 @@ func runMigrations(cfg *Config, currentVersion int) error {
 	}
 	log.Info().Int("version", currentVersion).Msg("schema migrations complete")
 
-	if err := reconcileGroups(cfg); err != nil {
-		return errors.Wrap(err, "reconcile groups")
-	}
-	if err := updateAllSecrets(cfg); err != nil {
-		return errors.Wrap(err, "update all secrets")
+	if err := syncAllRecipients(cfg); err != nil {
+		return errors.Wrap(err, "sync recipients")
 	}
 	if err := verifyAllSecrets(cfg); err != nil {
 		return errors.Wrap(err, "secret verify")

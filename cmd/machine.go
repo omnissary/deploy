@@ -1071,7 +1071,7 @@ func ensureMachineSecrets(cfg *Config, machine string) error {
 	if err := ensureSecrets(cfg, machine); err != nil {
 		return err
 	}
-	if err := reconcileGroups(cfg); err != nil {
+	if err := syncAllRecipients(cfg); err != nil {
 		return errors.Wrap(err, "reconcile group rules")
 	}
 	return ensureZFSKey(cfg, machine)

@@ -63,7 +63,7 @@ All paths are constructed via `internal/vars`; never hard-code them in `cmd/`.
 
 ## SOPS rules in .sops.yaml
 
-`internal/sops/rules.go` owns all creation-rule management. Rules are matched by path regex:
+`.sops.yaml` is generated. `internal/sops/model.go` turns a `Model` (admin PGP keys and session age keys from the generic machine rule, machine age keys from the host `.pub` files on disk, groups from the hosts file) into the full rule list. Rules are matched by path regex:
 
 - Generic machine rule: `vars/secrets/[^/]+\.yaml$` -- recipients = admin PGP keys + session age key
 - Per-machine rule: `vars/secrets/<machine>\.yaml$` -- generic rule recipients + machine's own age key (derived from its SSH host key)
@@ -71,7 +71,7 @@ All paths are constructed via `internal/vars`; never hard-code them in `cmd/`.
 - Vars rule: `vars/secrets/<machine>/.+$` -- covers host/initrd key files
 - Admin rule: `vars/admin/.+$` -- admin-only
 
-`UpsertMachineRules` and `ReconcileGroupRules` are idempotent; they only write `.sops.yaml` and re-key files when the desired rule set differs from what's on disk. Both accept an `updateFn` callback (normally `sops.UpdateKeys`) so callers can swap it out in tests.
+`MakePlan` compares the desired rules with `.sops.yaml` and with the recipients recorded in every encrypted file's metadata (no decryption), `Apply` writes the rules and re-keys only the files that differ, `Sync` does both. A re-key interrupted part-way is picked up by the next sync. In `cmd/`, change recipients only through `syncRecipients(cfg, edit)`; never edit rules piecemeal. Rules not matching the owned patterns are preserved before the generic fallbacks.
 
 ## Hosts file format
 

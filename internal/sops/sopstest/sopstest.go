@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"git.tatikoma.dev/corpix/deploy/internal/agekey"
 )
@@ -120,6 +121,13 @@ func NewPGPKey(t testing.TB) string {
 		_ = kill.Run()
 		_ = os.RemoveAll(home)
 	})
+	return AddPGPKey(t)
+}
+
+// AddPGPKey generates another key in the keyring activated by NewPGPKey and
+// returns its fingerprint.
+func AddPGPKey(t testing.TB) string {
+	t.Helper()
 	gpg := func(args ...string) string {
 		out, err := exec.Command("gpg", append([]string{"--batch", "--pinentry-mode", "loopback", "--passphrase", ""}, args...)...).CombinedOutput()
 		if err != nil {
@@ -127,9 +135,10 @@ func NewPGPKey(t testing.TB) string {
 		}
 		return string(out)
 	}
-	gpg("--quick-gen-key", "deploy-test <test@invalid>", "ed25519", "sign", "never")
+	uid := fmt.Sprintf("deploy-test-%d <test@invalid>", time.Now().UnixNano())
+	gpg("--quick-gen-key", uid, "ed25519", "sign", "never")
 	var fpr string
-	for _, line := range strings.Split(gpg("--list-keys", "--with-colons"), "\n") {
+	for _, line := range strings.Split(gpg("--list-keys", "--with-colons", uid), "\n") {
 		if f := strings.Split(line, ":"); len(f) > 9 && f[0] == "fpr" {
 			fpr = f[9]
 			break

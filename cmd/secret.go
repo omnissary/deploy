@@ -211,7 +211,7 @@ func secretCmd() *cli.Command {
 			},
 			{
 				Name:      "update",
-				Usage:     "re-encrypt secrets with current keys from .sops.yaml; with no name, update every file",
+				Usage:     "regenerate .sops.yaml and re-encrypt files whose recipients are out of date; with a name, also re-encrypt that file unconditionally",
 				ArgsUsage: "[<name>]",
 				BashComplete: func(ctx *cli.Context) {
 					if ctx.NArg() > secretArgTarget {
@@ -225,7 +225,7 @@ func secretCmd() *cli.Command {
 				Action: func(ctx *cli.Context) error {
 					cfg := getConfig(ctx)
 					if ctx.NArg() == 0 {
-						return updateAllSecrets(cfg)
+						return syncAllRecipients(cfg)
 					}
 					target, err := resolveSecretTarget(cfg, ctx.Args().Get(0))
 					if err != nil {
@@ -233,6 +233,9 @@ func secretCmd() *cli.Command {
 					}
 					if !fileExists(target.path) {
 						return errors.Errorf("no secrets file at %s", target.path)
+					}
+					if err := syncAllRecipients(cfg); err != nil {
+						return err
 					}
 					log.Info().Str("file", target.path).Msg("updating secret keys")
 					if err := sops.UpdateKeys(cfg.SopsConf, target.path); err != nil {
@@ -509,7 +512,7 @@ func ensureSecretFile(cfg *Config, target *secretTarget) error {
 		}
 		return createEncryptedYAMLIfMissing(cfg, target.path, "machine", target.name)
 	case targetGroup:
-		if err := reconcileGroups(cfg); err != nil {
+		if err := syncAllRecipients(cfg); err != nil {
 			return errors.Wrap(err, "reconcile groups before creating shared secret")
 		}
 		return createEncryptedYAMLIfMissing(cfg, target.path, "group", target.name)
@@ -603,29 +606,6 @@ func promptRepair(in io.Reader, out io.Writer) func(*sops.File) (bool, error) {
 			return false, nil
 		}
 	}
-}
-
-func updateAllSecrets(cfg *Config) error {
-	if err := reconcileGroups(cfg); err != nil {
-		return err
-	}
-	paths := sops.ListEncryptedFiles(cfg.FlakeDir)
-	sort.Strings(paths)
-	if len(paths) == 0 {
-		log.Info().Msg("no encrypted files found")
-		return nil
-	}
-	for i, path := range paths {
-		log.Info().
-			Int("index", i+1).
-			Int("total", len(paths)).
-			Str("file", path).
-			Msg("updating secret keys")
-		if err := sops.UpdateKeys(cfg.SopsConf, path); err != nil {
-			return errors.Wrapf(err, "update keys for %s", path)
-		}
-	}
-	return nil
 }
 
 func listSecretFileKeys(path, label string) error {

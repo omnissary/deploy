@@ -150,7 +150,7 @@ func keyAdminCmd() *cli.Command {
 						return err
 					}
 					fingerprint := ctx.Args().Get(0)
-					changed, err := sops.AddAdminKey(cfg.SopsConf, cfg.FlakeDir, fingerprint, sops.UpdateKeys)
+					changed, err := addAdminKey(cfg, fingerprint)
 					if err != nil {
 						return err
 					}
@@ -175,7 +175,7 @@ func keyAdminCmd() *cli.Command {
 						return err
 					}
 					fingerprint := ctx.Args().Get(0)
-					changed, err := sops.RemoveAdminKey(cfg.SopsConf, cfg.FlakeDir, fingerprint, sops.UpdateKeys)
+					changed, err := removeAdminKey(cfg, fingerprint)
 					if err != nil {
 						return err
 					}
@@ -294,7 +294,11 @@ func ensureSessionKey(cfg *Config, name string) error {
 	if res == keypair.Existing {
 		log.Info().Str("name", name).Msg("session key already exists")
 	}
-	changed, err := sops.AddSessionKey(cfg.SopsConf, cfg.FlakeDir, public, sops.UpdateKeys)
+	var changed bool
+	_, err = syncRecipients(cfg, func(m *sops.Model) error {
+		changed = addRecipient(&m.Sessions, public)
+		return nil
+	})
 	if err != nil {
 		return errors.Wrap(err, "add session key to .sops.yaml")
 	}
@@ -376,7 +380,12 @@ func removeSessionKey(cfg *Config, name string) error {
 		return err
 	}
 
-	if _, err := sops.RemoveSessionKey(cfg.SopsConf, cfg.FlakeDir, ageKey, sops.UpdateKeys); err != nil {
+	if _, err := syncRecipients(cfg, func(m *sops.Model) error {
+		if !removeRecipient(&m.Sessions, ageKey) {
+			return errors.Errorf("session key %s is not a recipient in %s", name, cfg.SopsConf)
+		}
+		return nil
+	}); err != nil {
 		return errors.Wrap(err, "remove session key from .sops.yaml")
 	}
 
@@ -406,12 +415,7 @@ func ensureHostKey(cfg *Config, machine string) error {
 		Generate: sshKeyGenerator(""),
 		Derive:   sshKeyDeriver(""),
 		Prepare: func(pub []byte) error {
-			ageKey, err := sshkey.ToAge(pub)
-			if err != nil {
-				return errors.Wrapf(err, "derive age key for %s", machine)
-			}
-			_, err = sops.UpsertMachineRules(cfg.SopsConf, cfg.FlakeDir, machine, ageKey, skipUpdateKeys)
-			return err
+			return installMachineRules(cfg, machine, pub)
 		},
 	})
 	if err != nil {
@@ -428,17 +432,12 @@ func ensureHostKey(cfg *Config, machine string) error {
 	}
 	log.Debug().Str("machine", machine).Str("age", ageKey).Msg("derived age key")
 
-	rulesChanged, err := sops.UpsertMachineRules(cfg.SopsConf, cfg.FlakeDir, machine, ageKey, sops.UpdateKeys)
+	plan, err := syncRecipients(cfg, nil)
 	if err != nil {
-		return errors.Wrapf(err, "update sops rules for %s", machine)
-	}
-	if res == keypair.Generated {
-		if err := rekeyMachineFiles(cfg, machine); err != nil {
-			return err
-		}
+		return errors.Wrapf(err, "update sops recipients for %s", machine)
 	}
 
-	if res != keypair.Existing || rulesChanged {
+	if res != keypair.Existing || !plan.Empty() {
 		fmt.Printf("path: %s\n", pubPath)
 		fmt.Printf("ssh:  %s", pubLine)
 		fmt.Printf("age:  %s\n", ageKey)
@@ -446,20 +445,25 @@ func ensureHostKey(cfg *Config, machine string) error {
 	return nil
 }
 
-func skipUpdateKeys(string, string) error { return nil }
-
-// rekeyMachineFiles applies the current creation rules to every existing
-// encrypted file of machine.
-func rekeyMachineFiles(cfg *Config, machine string) error {
-	for _, path := range vars.MachineFiles(cfg.FlakeDir, machine) {
-		if !fileExists(path) {
-			continue
-		}
-		if err := sops.UpdateKeys(cfg.SopsConf, path); err != nil {
-			return errors.Wrapf(err, "updatekeys %s", path)
-		}
+// installMachineRules writes the creation rules for a machine whose host key
+// is about to be created, without re-keying anything: the key does not exist
+// yet, so no file may be encrypted for it before it is on disk.
+func installMachineRules(cfg *Config, machine string, pub []byte) error {
+	ageKey, err := sshkey.ToAge(pub)
+	if err != nil {
+		return errors.Wrapf(err, "derive age key for %s", machine)
 	}
-	return nil
+	m, err := loadRecipientModel(cfg)
+	if err != nil {
+		return err
+	}
+	m.Machines[machine] = ageKey
+	p, err := sops.MakePlan(cfg.SopsConf, cfg.FlakeDir, m)
+	if err != nil {
+		return err
+	}
+	p.Rekey = nil
+	return sops.Apply(cfg.SopsConf, p, nil)
 }
 
 func sshKeyGenerator(comment string) func() ([]byte, []byte, error) {

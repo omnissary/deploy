@@ -12,7 +12,6 @@ import (
 
 	"git.tatikoma.dev/corpix/deploy/internal/hosts"
 	"git.tatikoma.dev/corpix/deploy/internal/nix"
-	"git.tatikoma.dev/corpix/deploy/internal/sops"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
 )
 
@@ -108,7 +107,7 @@ func groupCmd() *cli.Command {
 						return err
 					}
 					log.Info().Str("group", group).Strs("members", members).Msg("group created")
-					return reconcileGroups(cfg)
+					return syncAllRecipients(cfg)
 				},
 			},
 			{
@@ -151,7 +150,7 @@ func groupCmd() *cli.Command {
 						return err
 					}
 					log.Info().Str("group", group).Strs("members", result).Msg("group updated")
-					return reconcileGroups(cfg)
+					return syncAllRecipients(cfg)
 				},
 			},
 			{
@@ -186,7 +185,7 @@ func groupCmd() *cli.Command {
 						return err
 					}
 					log.Info().Str("group", group).Strs("members", result).Msg("group updated")
-					return reconcileGroups(cfg)
+					return syncAllRecipients(cfg)
 				},
 			},
 			{
@@ -217,28 +216,11 @@ func groupCmd() *cli.Command {
 						return err
 					}
 					log.Info().Str("group", group).Msg("group deleted")
-					return reconcileGroups(cfg)
+					return syncAllRecipients(cfg)
 				},
 			},
 		},
 	}
-}
-
-// reconcileGroups syncs .sops.yaml's per-group creation rules with the groups
-// declared in the hosts file and re-encrypts any affected shared secret files.
-func reconcileGroups(cfg *Config) error {
-	groups, err := hosts.Groups(cfg.HostsFile)
-	if err != nil {
-		return errors.Wrap(err, "load groups")
-	}
-	changed, err := sops.ReconcileGroupRules(cfg.SopsConf, cfg.FlakeDir, groups, sops.UpdateKeys)
-	if err != nil {
-		return err
-	}
-	if changed {
-		log.Info().Msg(".sops.yaml reconciled with hosts file")
-	}
-	return nil
 }
 
 // requireGroupName validates that the group name is well-formed and not already

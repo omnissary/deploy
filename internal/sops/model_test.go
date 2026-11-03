@@ -457,7 +457,11 @@ func TestLoadModel(t *testing.T) {
 	if err := InitConf(conf, []string{adminA}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := AddSessionKey(conf, dir, "age1session", func(string, string) error { return nil }); err != nil {
+	rules, err := DesiredRules(Model{Admins: []string{adminA}, Sessions: []string{"age1session"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSopsYAML(conf, sopsYAML{CreationRules: rules}); err != nil {
 		t.Fatal(err)
 	}
 	pair, err := sshkey.Generate()

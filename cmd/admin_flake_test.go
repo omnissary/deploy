@@ -33,8 +33,11 @@ func newAdminFlake(t *testing.T) adminFlake {
 	if err := sops.InitConf(cfg.SopsConf, []string{fpr}); err != nil {
 		t.Fatalf("InitConf: %v", err)
 	}
-	if _, err := sops.AddSessionKey(cfg.SopsConf, dir, session.Public, sops.UpdateKeys); err != nil {
-		t.Fatalf("AddSessionKey: %v", err)
+	if _, err := syncRecipients(cfg, func(m *sops.Model) error {
+		m.Sessions = append(m.Sessions, session.Public)
+		return nil
+	}); err != nil {
+		t.Fatalf("add session key: %v", err)
 	}
 	return adminFlake{cfg: cfg, pgp: fpr, session: session}
 }
