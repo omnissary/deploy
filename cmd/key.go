@@ -11,6 +11,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"git.tatikoma.dev/corpix/deploy/internal/agekey"
+	"git.tatikoma.dev/corpix/deploy/internal/keypair"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
 	"git.tatikoma.dev/corpix/deploy/internal/sshkey"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
@@ -382,59 +383,30 @@ func ensureHostKey(cfg *Config, machine string) error {
 		return err
 	}
 
-	dir := vars.MachineHostKeyDir(cfg.FlakeDir, machine)
 	pubPath := vars.MachineHostKeyPubPath(cfg.FlakeDir, machine)
-	privPath := vars.MachineHostKeyPath(cfg.FlakeDir, machine)
-	generated := false
-
-	if _, err := os.Stat(pubPath); err == nil {
-		log.Debug().Str("machine", machine).Msg("host key already exists")
-	} else {
-		log.Info().Str("machine", machine).Msg("generating host ssh key pair")
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return errors.Wrapf(err, "create dir %s", dir)
-		}
-
-		pair, err := sshkey.Generate()
-		if err != nil {
+	res, err := keypair.Ensure(cfg.SopsConf, keypair.Spec{
+		Name:     machine + " host key",
+		Priv:     vars.MachineHostKeyPath(cfg.FlakeDir, machine),
+		Pub:      pubPath,
+		Generate: sshKeyGenerator(""),
+		Derive:   sshKeyDeriver(""),
+		Prepare: func(pub []byte) error {
+			ageKey, err := sshkey.ToAge(pub)
+			if err != nil {
+				return errors.Wrapf(err, "derive age key for %s", machine)
+			}
+			_, err = sops.UpsertMachineRules(cfg.SopsConf, cfg.FlakeDir, machine, ageKey, skipUpdateKeys)
 			return err
-		}
-
-		privPEM, err := sshkey.MarshalPrivatePEM(pair)
-		if err != nil {
-			return err
-		}
-
-		pubLine, err := sshkey.MarshalPublicAuthorizedKey(pair, "")
-		if err != nil {
-			return err
-		}
-
-		// Derive age key now so we can set up the sops recipient rule before
-		// encrypting — the rule must exist for sops.Create to succeed.
-		ageKey, err := sshkey.ToAge(pubLine)
-		if err != nil {
-			return errors.Wrapf(err, "derive age key for %s", machine)
-		}
-		if _, err := sops.UpsertMachineRules(cfg.SopsConf, cfg.FlakeDir, machine, ageKey, sops.UpdateKeys); err != nil {
-			return errors.Wrapf(err, "update sops rules for %s", machine)
-		}
-
-		if err := sops.Create(cfg.SopsConf, privPath, privPEM); err != nil {
-			return errors.Wrapf(err, "encrypt host private key for %s", machine)
-		}
-		if err := os.WriteFile(pubPath, pubLine, 0o644); err != nil {
-			return errors.Wrapf(err, "write host public key")
-		}
-		generated = true
-		log.Info().Str("machine", machine).Str("path", pubPath).Msg("host key written")
+		},
+	})
+	if err != nil {
+		return err
 	}
 
 	pubLine, err := os.ReadFile(pubPath)
 	if err != nil {
 		return errors.Wrapf(err, "read host public key")
 	}
-
 	ageKey, err := sshkey.ToAge(pubLine)
 	if err != nil {
 		return errors.Wrapf(err, "derive age key for %s", machine)
@@ -445,13 +417,58 @@ func ensureHostKey(cfg *Config, machine string) error {
 	if err != nil {
 		return errors.Wrapf(err, "update sops rules for %s", machine)
 	}
+	if res == keypair.Generated {
+		if err := rekeyMachineFiles(cfg, machine); err != nil {
+			return err
+		}
+	}
 
-	if generated || rulesChanged {
+	if res != keypair.Existing || rulesChanged {
 		fmt.Printf("path: %s\n", pubPath)
 		fmt.Printf("ssh:  %s", pubLine)
 		fmt.Printf("age:  %s\n", ageKey)
 	}
 	return nil
+}
+
+func skipUpdateKeys(string, string) error { return nil }
+
+// rekeyMachineFiles applies the current creation rules to every existing
+// encrypted file of machine.
+func rekeyMachineFiles(cfg *Config, machine string) error {
+	for _, path := range vars.MachineFiles(cfg.FlakeDir, machine) {
+		if !fileExists(path) {
+			continue
+		}
+		if err := sops.UpdateKeys(cfg.SopsConf, path); err != nil {
+			return errors.Wrapf(err, "updatekeys %s", path)
+		}
+	}
+	return nil
+}
+
+func sshKeyGenerator(comment string) func() ([]byte, []byte, error) {
+	return func() ([]byte, []byte, error) {
+		pair, err := sshkey.Generate()
+		if err != nil {
+			return nil, nil, err
+		}
+		priv, err := sshkey.MarshalPrivatePEM(pair)
+		if err != nil {
+			return nil, nil, err
+		}
+		pub, err := sshkey.MarshalPublicAuthorizedKey(pair, comment)
+		if err != nil {
+			return nil, nil, err
+		}
+		return priv, pub, nil
+	}
+}
+
+func sshKeyDeriver(comment string) func([]byte) ([]byte, error) {
+	return func(priv []byte) ([]byte, error) {
+		return sshkey.PublicFromPrivate(priv, comment)
+	}
 }
 
 func ensureInitrdKey(cfg *Config, machine string) error {
