@@ -40,29 +40,50 @@ Generate and encrypt per-machine SSH key pairs. Private keys are stored as SOPS-
 deploy key host <machine>     # ensure openssh host key
 deploy key initrd <machine>   # ensure initrd SSH key
 deploy key ensure <machine>   # ensure both
+deploy key admin list|add|remove <fingerprint>   # admin PGP recipients (re-encrypts via sync)
+deploy key session ensure|unlock|remove [--name]  # dev-session age keys; unlock needs XDG_RUNTIME_DIR
 ```
 
 ### secret
 
-Manage per-machine SOPS-encrypted YAML secrets at `machines/<machine>/secrets.yaml`.
+Manage SOPS-encrypted YAML secrets. `<name>` is a group from the hosts file
+(`vars/secrets/shared/<group>.yaml`) or a machine (`vars/secrets/<machine>.yaml`).
 
 ```
-deploy secret ensure <machine>             # create secrets file if absent
-deploy secret get <machine> <key>          # decrypt and print a value
-deploy secret set <machine> <key>          # read value from stdin and write
-deploy secret update <machine>             # re-encrypt with current .sops.yaml keys
-deploy secret shared ensure <group>        # create shared secrets file if absent
-deploy secret shared get <group> <key>     # decrypt and print a shared value
-deploy secret shared set <group> <key>     # read value from stdin and write
-deploy secret shared update <group>        # re-encrypt with current shared recipients
+deploy secret list [<name>]                         # list keys (no decryption)
+deploy secret get <name> <key>                      # decrypt and print a value
+deploy secret set <name> <key>                      # read value from stdin and write
+deploy secret del <name> <key>                      # delete a key
+deploy secret mv <src> <key> <dst> [<key>] [--force] # move/rename; refuses to overwrite without --force
+deploy secret verify [<name>]                       # check decryption and integrity of one or all files
+deploy secret repair <name> | --file <path> [--yes] # re-sign a file whose integrity check fails, after confirmation
+deploy secret update [<name>]                       # sync recipients; with a name also re-encrypt that file
 ```
+
+`set` and `mv` never generate keys or change recipients. A machine needs a host
+key (`machine provision`) before its secrets file can be created, and a new file
+is only created while recipients are in sync.
+
+### sync
+
+`.sops.yaml` is generated from the admin PGP keys and session age keys in its
+generic rules, the machine host public keys under `vars/secrets/*/openssh/`, and
+the groups in the hosts file.
+
+```
+deploy sync [--dry-run]   # rewrite .sops.yaml and re-encrypt files whose recipients differ
+```
+
+`--dry-run` only reads file metadata and needs no decryption key. A re-encryption
+interrupted part-way is completed by the next `sync`.
 
 ### machine
 
 NixOS machine lifecycle.
 
 ```
-deploy machine init <machine> <host>       # bootstrap via nixos-anywhere
+deploy machine init <machine> <host>       # provision, then bootstrap via nixos-anywhere
+deploy machine provision <machine|group...> # create missing keys, secrets file and ZFS root keys; sync recipients
 deploy machine build <machine...>          # build system toplevel
 deploy machine eval <machine> <attr>       # evaluate config attribute (JSON output)
 deploy machine audit <machine>             # check closure for source leaks
@@ -75,6 +96,12 @@ deploy machine unlock <machine>            # send ZFS root key to initrd listene
 `--kexec-flavor` (default `zfs`), `--kexec` (explicit tarball path, skips auto-build),
 `--ssh-option` (extra SSH option, repeatable, prepended to nixos-anywhere SSH calls).  
 `unlock` flag: `--initrd-port` (default `2222`).
+
+Only `init` and `provision` create keys or change recipients. `build`, `eval`,
+`audit`, `deploy` and `unlock` check that the machine is provisioned and that
+recipients are in sync, without decrypting anything, and fail with the command
+to run otherwise. Existing keys are never regenerated: a missing public key is
+derived from its encrypted private key, a missing private key is an error.
 
 ### kexec
 

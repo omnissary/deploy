@@ -35,7 +35,7 @@ var migrations = []migration{
 func migrateCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "migrate",
-		Usage: "bring vars/.deploy.state forward, reconcile groups, then re-encrypt and verify all secrets",
+		Usage: "bring vars/.deploy.state forward, sync recipients, then verify all secrets",
 		Before: func(ctx *cli.Context) error {
 			cfg := getConfig(ctx)
 			if err := requireFlake(cfg); err != nil {

@@ -24,8 +24,10 @@ main.go                  entry point; calls cmd.New().Run()
 cmd/                     all CLI command implementations (urfave/cli v2)
 internal/
   hosts/                 YAML registry: machine->address and group membership
-  sops/                  thin wrapper around getsops/sops; sops.go = encrypt/decrypt/set/del,
-                         rules.go = .sops.yaml creation-rule management
+  sops/                  wrapper around getsops/sops; file.go = File (one decrypt, Get/Set/
+                         SetIfAbsent/Delete/Rekey, one Save), sops.go = Create/Verify/Repair,
+                         model.go = Model -> rules, MakePlan/Apply/Sync, rules.go = .sops.yaml I/O
+  keypair/               Ensure for encrypted-private/plaintext-public key pairs (never regenerates)
   vars/                  pure path/regex builders for the vars/ layout (no I/O)
   nix/                   subprocess wrappers for nix build, nix eval, nixos-rebuild, nixos-anywhere
   state/                 per-flake schema version (vars/.deploy.state) for migrate steps
@@ -40,7 +42,9 @@ The `git.tatikoma.dev/corpix/atlas` dependency provides `errors` (wrapping) and 
 
 `cmd.New()` builds the urfave/cli app. `Config` is populated in the app's `Before` hook from global flags and stored in `cli.App.Metadata["deploy.config"]`; every action retrieves it via `getConfig(ctx)`.
 
-Top-level subcommands: `init`, `host`, `key`, `secret`, `group`, `migrate`, `machine`, `kexec`.
+Top-level subcommands: `init`, `host`, `key`, `secret`, `group`, `migrate`, `sync`, `machine`, `kexec`.
+
+Provisioning (generating keys, creating files, changing recipients) happens only in `machine init`, `machine provision`, `key ...`, `group ...` and `sync`. Data commands (`secret set/mv/...`) and use commands (`machine build/eval/audit/deploy/unlock`) must not generate keys or re-key files; use commands call `requireMachinesProvisioned`. Generated secrets go through `SetIfAbsent`, never `Set`.
 
 Name validation uses `requireSimpleName()` (pattern `^[a-z0-9][a-z0-9_-]*$`). Machine-in-flake validation calls `nix.EvalApply` to list `nixosConfigurations`. Group names and machine names are enforced to be disjoint by `requireGroupName()` in `cmd/group.go`.
 
