@@ -7,13 +7,17 @@ import (
 
 const (
 	segSecrets  = "vars/secrets"
-	segShared   = "shared"
+	segShared   = SharedDirName
 	segOpenSSH  = "openssh"
 	segInitrd   = "initrd-ssh"
 	segAdmin    = "vars/admin"
 	fileHostKey = "ssh_host_ed25519_key"
 	fileInitKey = "id_ed25519"
 )
+
+// SharedDirName is the directory holding group secrets under vars/secrets; it
+// cannot be used as a machine name.
+const SharedDirName = "shared"
 
 // Regex constants for SOPS creation rules.
 const (
@@ -118,4 +122,14 @@ func SessionKeyPath(flakeDir, name string) string {
 
 func SessionKeyPubPath(flakeDir, name string) string {
 	return SessionKeyPath(flakeDir, name) + ".pub"
+}
+
+func MachineHostKeyPubGlob(flakeDir string) string {
+	return MachineHostKeyGlob(flakeDir) + ".pub"
+}
+
+// MachineFromHostKeyPubPath returns the machine name of a path produced by
+// MachineHostKeyPubGlob.
+func MachineFromHostKeyPubPath(path string) string {
+	return filepath.Base(filepath.Dir(filepath.Dir(path)))
 }
