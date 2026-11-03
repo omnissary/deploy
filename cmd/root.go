@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -17,6 +16,7 @@ import (
 	"git.tatikoma.dev/corpix/atlas/log"
 	"git.tatikoma.dev/corpix/deploy/internal/hosts"
 	"git.tatikoma.dev/corpix/deploy/internal/nix"
+	"git.tatikoma.dev/corpix/deploy/internal/vars"
 	"github.com/urfave/cli/v2"
 )
 
@@ -162,8 +162,6 @@ func buildDynamicFishCompletions(appName string) string {
 
 const configKey = "deploy.config"
 
-var simpleNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
-
 func getConfig(ctx *cli.Context) *Config {
 	return ctx.App.Metadata[configKey].(*Config)
 }
@@ -191,7 +189,7 @@ func requireSimpleName(kind, value string) (string, error) {
 	if value == "" {
 		return "", errors.Errorf("%s name is required", kind)
 	}
-	if !simpleNamePattern.MatchString(value) {
+	if !vars.ValidName(value) {
 		return "", errors.Errorf("invalid %s name %q: allowed characters are lowercase letters, digits, underscore, and hyphen", kind, value)
 	}
 	return value, nil
@@ -225,8 +223,21 @@ func requireMachineInFlake(cfg *Config, machine string) error {
 		machine, strings.Join(machines, ", "))
 }
 
-func requireMachine(cfg *Config, value string) (string, error) {
+// requireMachineName validates a machine name, rejecting the directory name
+// reserved for group secrets.
+func requireMachineName(value string) (string, error) {
 	machine, err := requireSimpleName("machine", value)
+	if err != nil {
+		return "", err
+	}
+	if machine == vars.SharedDirName {
+		return "", errors.Errorf("machine name %q is reserved for group secrets", machine)
+	}
+	return machine, nil
+}
+
+func requireMachine(cfg *Config, value string) (string, error) {
+	machine, err := requireMachineName(value)
 	if err != nil {
 		return "", err
 	}

@@ -490,6 +490,9 @@ func resolveSecretTarget(cfg *Config, raw string) (*secretTarget, error) {
 			kind: targetGroup,
 		}, nil
 	}
+	if _, err := requireMachineName(name); err != nil {
+		return nil, err
+	}
 	if err := requireMachineInFlake(cfg, name); err != nil {
 		return nil, errors.Wrapf(err, "%q is neither a declared group nor a machine", name)
 	}

@@ -19,6 +19,14 @@ const (
 // cannot be used as a machine name.
 const SharedDirName = "shared"
 
+var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+// ValidName reports whether s can be used as a machine, group or session key
+// name. Such names are safe both as path components and inside path regexes.
+func ValidName(s string) bool {
+	return namePattern.MatchString(s)
+}
+
 // Regex constants for SOPS creation rules.
 const (
 	GenericMachineRegex = segSecrets + `/[^/]+\.yaml$`

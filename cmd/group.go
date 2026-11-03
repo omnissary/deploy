@@ -257,7 +257,7 @@ func validateMembers(cfg *Config, members []string) ([]string, error) {
 	}
 	out := make([]string, 0, len(members))
 	for _, raw := range members {
-		name, err := requireSimpleName("machine", raw)
+		name, err := requireMachineName(raw)
 		if err != nil {
 			return nil, err
 		}

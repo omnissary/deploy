@@ -14,8 +14,6 @@ import (
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
 )
 
-var modelNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
-
 // Model is the declarative source of every recipient in .sops.yaml.
 type Model struct {
 	// Admins are PGP fingerprints that can decrypt everything.
@@ -70,7 +68,7 @@ func (m Model) validate() error {
 		return errors.New("at least one admin PGP recipient is required")
 	}
 	for machine := range m.Machines {
-		if !modelNamePattern.MatchString(machine) {
+		if !vars.ValidName(machine) {
 			return errors.Errorf("invalid machine name %q", machine)
 		}
 		if machine == vars.SharedDirName {
@@ -78,7 +76,7 @@ func (m Model) validate() error {
 		}
 	}
 	for group := range m.Groups {
-		if !modelNamePattern.MatchString(group) {
+		if !vars.ValidName(group) {
 			return errors.Errorf("invalid group name %q", group)
 		}
 	}
@@ -136,7 +134,7 @@ func ownedRule(regex string) bool {
 		return true
 	}
 	if name, ok := parsePerGroupSharedRegex(regex); ok {
-		return modelNamePattern.MatchString(name)
+		return vars.ValidName(name)
 	}
 	const prefix = "vars/secrets/"
 	if !strings.HasPrefix(regex, prefix) {
@@ -144,7 +142,7 @@ func ownedRule(regex string) bool {
 	}
 	rest := regex[len(prefix):]
 	for _, suffix := range []string{`\.yaml$`, `/.+$`} {
-		if name, ok := strings.CutSuffix(rest, suffix); ok && modelNamePattern.MatchString(name) {
+		if name, ok := strings.CutSuffix(rest, suffix); ok && vars.ValidName(name) {
 			return true
 		}
 	}
