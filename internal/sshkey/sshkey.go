@@ -58,6 +58,25 @@ func MarshalPublicAuthorizedKey(pair Pair, comment string) ([]byte, error) {
 	return line, nil
 }
 
+// PublicFromPrivate returns the authorized_keys line for an OpenSSH PEM
+// private key, formatted exactly like MarshalPublicAuthorizedKey.
+func PublicFromPrivate(privPEM []byte, comment string) ([]byte, error) {
+	raw, err := ssh.ParseRawPrivateKey(privPEM)
+	if err != nil {
+		return nil, errors.Wrap(err, "parse private key")
+	}
+	var priv ed25519.PrivateKey
+	switch k := raw.(type) {
+	case ed25519.PrivateKey:
+		priv = k
+	case *ed25519.PrivateKey:
+		priv = *k
+	default:
+		return nil, errors.Errorf("unsupported private key type %T", raw)
+	}
+	return MarshalPublicAuthorizedKey(Pair{Private: priv, Public: priv.Public().(ed25519.PublicKey)}, comment)
+}
+
 // VerifyPair checks that the private PEM bytes correspond to the public key line.
 func VerifyPair(privPEM, pubLine []byte) error {
 	signer, err := ssh.ParsePrivateKey(privPEM)

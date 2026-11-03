@@ -2,6 +2,8 @@
 package agekey
 
 import (
+	"strings"
+
 	"filippo.io/age"
 
 	"git.tatikoma.dev/corpix/atlas/errors"
@@ -23,4 +25,13 @@ func Generate() (Pair, error) {
 		Private: id.String(),
 		Public:  id.Recipient().String(),
 	}, nil
+}
+
+// PublicFromPrivate returns the recipient for an AGE-SECRET-KEY-1... identity.
+func PublicFromPrivate(private string) (string, error) {
+	id, err := age.ParseX25519Identity(strings.TrimSpace(private))
+	if err != nil {
+		return "", errors.Wrap(err, "parse age identity")
+	}
+	return id.Recipient().String(), nil
 }
