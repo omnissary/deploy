@@ -155,7 +155,7 @@ func secretCmd() *cli.Command {
 					if err != nil {
 						return err
 					}
-					if err := ensureSecretFile(cfg, target); err != nil {
+					if err := prepareSecretFile(cfg, target); err != nil {
 						return err
 					}
 					key := ctx.Args().Get(1)
@@ -303,7 +303,7 @@ func secretCmd() *cli.Command {
 						Str("src", src.name).Str("src-key", srcKey).
 						Str("dst", dst.name).Str("dst-key", dstKey).
 						Msg("secret mv")
-					if err := ensureSecretFile(cfg, dst); err != nil {
+					if err := prepareSecretFile(cfg, dst); err != nil {
 						return err
 					}
 					if err := moveSecret(src.path, srcKey, dst.path, dstKey, ctx.Bool("force")); err != nil {
@@ -500,25 +500,25 @@ func resolveSecretTarget(cfg *Config, raw string) (*secretTarget, error) {
 	}, nil
 }
 
-// ensureSecretFile creates the encrypted secrets file for the target if it
-// does not already exist. For machine targets this also generates the host
-// key (so the machine's age recipient is in place); for group targets it
-// re-syncs the per-group .sops.yaml rule from the hosts file.
-func ensureSecretFile(cfg *Config, target *secretTarget) error {
-	switch target.kind {
-	case targetMachine:
-		if err := ensureHostKey(cfg, target.name); err != nil {
-			return errors.Wrapf(err, "ensure host key for %s", target.name)
-		}
-		return createEncryptedYAMLIfMissing(cfg, target.path, "machine", target.name)
-	case targetGroup:
-		if err := syncAllRecipients(cfg); err != nil {
-			return errors.Wrap(err, "reconcile groups before creating shared secret")
-		}
-		return createEncryptedYAMLIfMissing(cfg, target.path, "group", target.name)
-	default:
-		return errors.Errorf("unknown target kind %d", target.kind)
+// prepareSecretFile makes sure the target's secrets file exists without
+// generating keys or re-keying anything. A machine must already have a host
+// key, and a new file is only created while recipients are in sync, so it is
+// encrypted for exactly the recipients its rule describes.
+func prepareSecretFile(cfg *Config, target *secretTarget) error {
+	if fileExists(target.path) {
+		return nil
 	}
+	if target.kind == targetMachine && !fileExists(vars.MachineHostKeyPubPath(cfg.FlakeDir, target.name)) {
+		return errors.Errorf("machine %s has no host key yet; run 'deploy machine provision %s' first", target.name, target.name)
+	}
+	if err := requireRecipientsInSync(cfg); err != nil {
+		return err
+	}
+	kind := "machine"
+	if target.kind == targetGroup {
+		kind = "group"
+	}
+	return createEncryptedYAMLIfMissing(cfg, target.path, kind, target.name)
 }
 
 func createEncryptedYAMLIfMissing(cfg *Config, path, kind, name string) error {
