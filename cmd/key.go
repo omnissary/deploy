@@ -11,6 +11,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"git.tatikoma.dev/corpix/deploy/internal/agekey"
+	"git.tatikoma.dev/corpix/deploy/internal/atomicfile"
 	"git.tatikoma.dev/corpix/deploy/internal/keypair"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
 	"git.tatikoma.dev/corpix/deploy/internal/sshkey"
@@ -322,32 +323,43 @@ func unlockSessionKey(cfg *Config, name string) error {
 		return err
 	}
 
+	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+	if runtimeDir == "" {
+		return errors.New("XDG_RUNTIME_DIR is not set; refusing to write a decrypted session key to persistent storage")
+	}
+
 	priv, err := sops.ReadFile(vars.SessionKeyPath(cfg.FlakeDir, name))
 	if err != nil {
 		return errors.Wrapf(err, "decrypt session age key %s", name)
 	}
 
-	// Write to XDG_RUNTIME_DIR if available, else a temp dir.
-	var dir string
-	if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
-		dir = filepath.Join(xdg, "sops-"+name)
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return errors.Wrapf(err, "create session key dir %s", dir)
-		}
-	} else {
-		dir, err = os.MkdirTemp("", "sops-"+name+"-*")
-		if err != nil {
-			return errors.Wrap(err, "create temp dir for session key")
-		}
-	}
-
-	keyFile := filepath.Join(dir, "key")
-	if err := os.WriteFile(keyFile, priv, 0o600); err != nil {
-		return errors.Wrapf(err, "write session key to %s", keyFile)
+	keyFile, err := writeSessionKeyFile(runtimeDir, name, priv)
+	if err != nil {
+		return err
 	}
 
 	fmt.Printf("export SOPS_AGE_KEY_FILE=%s\n", keyFile)
 	return nil
+}
+
+// writeSessionKeyFile stores a decrypted session key under the per-user
+// runtime directory, which is private to the user and cleared on logout.
+func writeSessionKeyFile(runtimeDir, name string, priv []byte) (string, error) {
+	if runtimeDir == "" {
+		return "", errors.New("XDG_RUNTIME_DIR is not set; refusing to write a decrypted session key to persistent storage")
+	}
+	dir := filepath.Join(runtimeDir, "sops-"+name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", errors.Wrapf(err, "create session key dir %s", dir)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", errors.Wrapf(err, "restrict session key dir %s", dir)
+	}
+	keyFile := filepath.Join(dir, "key")
+	if err := atomicfile.Write(keyFile, priv, 0o600); err != nil {
+		return "", errors.Wrapf(err, "write session key to %s", keyFile)
+	}
+	return keyFile, nil
 }
 
 func removeSessionKey(cfg *Config, name string) error {

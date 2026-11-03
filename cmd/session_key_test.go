@@ -175,3 +175,75 @@ func TestRemoveUnknownSessionKeyFails(t *testing.T) {
 		t.Fatal(".sops.yaml modified")
 	}
 }
+
+func TestWriteSessionKeyFileRequiresRuntimeDir(t *testing.T) {
+	if _, err := writeSessionKeyFile("", "dev", []byte("AGE-SECRET-KEY-1X")); err == nil {
+		t.Fatal("expected error without XDG_RUNTIME_DIR")
+	}
+}
+
+func TestWriteSessionKeyFileIsPrivate(t *testing.T) {
+	runtime := t.TempDir()
+	dir := filepath.Join(runtime, "sops-dev")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := writeSessionKeyFile(runtime, "dev", []byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != filepath.Join(dir, "key") {
+		t.Fatalf("path = %s", path)
+	}
+	if string(mustRead(t, path)) != "secret" {
+		t.Fatal("wrong content")
+	}
+	for p, want := range map[string]os.FileMode{dir: 0o700, path: 0o600} {
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Errorf("%s mode = %o, want %o", p, got, want)
+		}
+	}
+
+	if _, err := writeSessionKeyFile(runtime, "dev", []byte("rotated")); err != nil {
+		t.Fatal(err)
+	}
+	if string(mustRead(t, path)) != "rotated" {
+		t.Fatal("existing key file not replaced")
+	}
+}
+
+func TestUnlockSessionKeyWritesDecryptedKey(t *testing.T) {
+	af := newAdminFlake(t)
+	if err := ensureSessionKey(af.cfg, "dev"); err != nil {
+		t.Fatal(err)
+	}
+	want := sessionIdentity(t, af.cfg, "dev").Private
+	runtime := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+
+	if err := unlockSessionKey(af.cfg, "dev"); err != nil {
+		t.Fatalf("unlockSessionKey: %v", err)
+	}
+	if got := string(mustRead(t, filepath.Join(runtime, "sops-dev", "key"))); got != want {
+		t.Fatal("unlocked key differs from the encrypted session key")
+	}
+}
+
+func TestUnlockSessionKeyWithoutRuntimeDirDoesNotDecrypt(t *testing.T) {
+	af := newAdminFlake(t)
+	if err := ensureSessionKey(af.cfg, "dev"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	sopstest.UseIdentities(t)
+
+	err := unlockSessionKey(af.cfg, "dev")
+	if err == nil || !strings.Contains(err.Error(), "XDG_RUNTIME_DIR") {
+		t.Fatalf("expected XDG_RUNTIME_DIR error before decryption, got %v", err)
+	}
+}
