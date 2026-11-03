@@ -111,3 +111,11 @@ func MachineFiles(flakeDir, machine string) []string {
 		MachineInitrdKeyPath(flakeDir, machine),
 	}
 }
+
+func SessionKeyPath(flakeDir, name string) string {
+	return filepath.Join(AdminDir(flakeDir), name+"-age-key")
+}
+
+func SessionKeyPubPath(flakeDir, name string) string {
+	return SessionKeyPath(flakeDir, name) + ".pub"
+}

@@ -257,55 +257,59 @@ func ensureSessionKey(cfg *Config, name string) error {
 	if err := requireAdminSOPSConfig(cfg); err != nil {
 		return err
 	}
-
-	adminDir := filepath.Join(cfg.FlakeDir, "vars", "admin")
-	privPath := filepath.Join(adminDir, name+"-age-key")
-	pubPath := privPath + ".pub"
-
-	if fileExists(pubPath) {
-		pub, err := os.ReadFile(pubPath)
-		if err != nil {
-			return errors.Wrapf(err, "read session public key")
-		}
-		public := strings.TrimSpace(string(pub))
-		log.Info().Str("name", name).Msg("session key already exists")
-		fmt.Printf("public: %s\n", public)
-		changed, err := sops.AddSessionKey(cfg.SopsConf, cfg.FlakeDir, public, sops.UpdateKeys)
-		if err != nil {
-			return errors.Wrap(err, "sync session key into .sops.yaml")
-		}
-		if changed {
-			log.Info().Str("name", name).Msg("session key synced into .sops.yaml and secrets re-encrypted")
-		} else {
-			log.Info().Str("name", name).Msg("session key already present in .sops.yaml")
-		}
-		return nil
-	}
-
-	log.Info().Str("name", name).Msg("generating session age key pair")
-	if err := os.MkdirAll(adminDir, 0o755); err != nil {
-		return errors.Wrapf(err, "create %s", adminDir)
-	}
-
-	pair, err := agekey.Generate()
+	name, err := requireSimpleName("session key", name)
 	if err != nil {
-		return errors.Wrap(err, "generate session age key")
+		return err
 	}
 
-	if err := sops.Create(cfg.SopsConf, privPath, []byte(pair.Private)); err != nil {
-		return errors.Wrap(err, "encrypt session age key")
+	pubPath := vars.SessionKeyPubPath(cfg.FlakeDir, name)
+	res, err := keypair.Ensure(cfg.SopsConf, keypair.Spec{
+		Name: name + " session key",
+		Priv: vars.SessionKeyPath(cfg.FlakeDir, name),
+		Pub:  pubPath,
+		Generate: func() ([]byte, []byte, error) {
+			pair, err := agekey.Generate()
+			if err != nil {
+				return nil, nil, err
+			}
+			return []byte(pair.Private), []byte(pair.Public + "\n"), nil
+		},
+		Derive: func(priv []byte) ([]byte, error) {
+			public, err := agekey.PublicFromPrivate(string(priv))
+			if err != nil {
+				return nil, err
+			}
+			return []byte(public + "\n"), nil
+		},
+	})
+	if err != nil {
+		return err
 	}
-	if err := os.WriteFile(pubPath, []byte(pair.Public+"\n"), 0o644); err != nil {
-		return errors.Wrapf(err, "write session public key")
-	}
-	log.Info().Str("name", name).Str("public", pair.Public).Msg("session key written")
 
-	if _, err := sops.AddSessionKey(cfg.SopsConf, cfg.FlakeDir, pair.Public, sops.UpdateKeys); err != nil {
+	public, err := readSessionPublicKey(cfg, name)
+	if err != nil {
+		return err
+	}
+	if res == keypair.Existing {
+		log.Info().Str("name", name).Msg("session key already exists")
+	}
+	changed, err := sops.AddSessionKey(cfg.SopsConf, cfg.FlakeDir, public, sops.UpdateKeys)
+	if err != nil {
 		return errors.Wrap(err, "add session key to .sops.yaml")
 	}
-
-	fmt.Printf("public: %s\n", pair.Public)
+	if changed {
+		log.Info().Str("name", name).Msg("session key added to .sops.yaml and secrets re-encrypted")
+	}
+	fmt.Printf("public: %s\n", public)
 	return nil
+}
+
+func readSessionPublicKey(cfg *Config, name string) (string, error) {
+	pub, err := os.ReadFile(vars.SessionKeyPubPath(cfg.FlakeDir, name))
+	if err != nil {
+		return "", errors.Wrapf(err, "read session public key for %s", name)
+	}
+	return strings.TrimSpace(string(pub)), nil
 }
 
 func unlockSessionKey(cfg *Config, name string) error {
@@ -313,9 +317,12 @@ func unlockSessionKey(cfg *Config, name string) error {
 		return err
 	}
 
-	privPath := filepath.Join(cfg.FlakeDir, "vars", "admin", name+"-age-key")
+	name, err := requireSimpleName("session key", name)
+	if err != nil {
+		return err
+	}
 
-	priv, err := sops.ReadFile(privPath)
+	priv, err := sops.ReadFile(vars.SessionKeyPath(cfg.FlakeDir, name))
 	if err != nil {
 		return errors.Wrapf(err, "decrypt session age key %s", name)
 	}
@@ -348,25 +355,21 @@ func removeSessionKey(cfg *Config, name string) error {
 		return err
 	}
 
-	privPath := filepath.Join(cfg.FlakeDir, "vars", "admin", name+"-age-key")
-	pubPath := privPath + ".pub"
-
-	pub, err := os.ReadFile(pubPath)
+	name, err := requireSimpleName("session key", name)
 	if err != nil {
-		return errors.Wrapf(err, "read session public key for %s", name)
+		return err
 	}
-	ageKey := string(pub)
-	// Trim trailing newline for comparison.
-	for len(ageKey) > 0 && (ageKey[len(ageKey)-1] == '\n' || ageKey[len(ageKey)-1] == '\r') {
-		ageKey = ageKey[:len(ageKey)-1]
+	ageKey, err := readSessionPublicKey(cfg, name)
+	if err != nil {
+		return err
 	}
 
 	if _, err := sops.RemoveSessionKey(cfg.SopsConf, cfg.FlakeDir, ageKey, sops.UpdateKeys); err != nil {
 		return errors.Wrap(err, "remove session key from .sops.yaml")
 	}
 
-	_ = os.Remove(privPath)
-	_ = os.Remove(pubPath)
+	_ = os.Remove(vars.SessionKeyPath(cfg.FlakeDir, name))
+	_ = os.Remove(vars.SessionKeyPubPath(cfg.FlakeDir, name))
 	log.Info().Str("name", name).Msg("session key removed")
 	return nil
 }
