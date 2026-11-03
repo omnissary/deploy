@@ -5,6 +5,7 @@ package sopstest
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -95,4 +96,48 @@ func NewFlake(t testing.TB) Flake {
 	f := Flake{Dir: dir, SopsConf: filepath.Join(dir, ".sops.yaml"), Identity: id}
 	WriteConf(t, f.SopsConf, Rule{PathRegex: ".*", Age: []string{id.Public}})
 	return f
+}
+
+// NewPGPKey creates a passphrase-less PGP key with an encryption subkey in a
+// fresh GNUPGHOME, activates that keyring for the rest of the test and
+// returns its fingerprint. The test is skipped if gpg is not installed. A
+// later UseIdentities call hides the keyring again.
+func NewPGPKey(t testing.TB) string {
+	t.Helper()
+	for _, bin := range []string{"gpg", "gpgconf"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not in PATH", bin)
+		}
+	}
+	home, err := os.MkdirTemp("", "gpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GNUPGHOME", home)
+	t.Cleanup(func() {
+		kill := exec.Command("gpgconf", "--kill", "gpg-agent")
+		kill.Env = append(os.Environ(), "GNUPGHOME="+home)
+		_ = kill.Run()
+		_ = os.RemoveAll(home)
+	})
+	gpg := func(args ...string) string {
+		out, err := exec.Command("gpg", append([]string{"--batch", "--pinentry-mode", "loopback", "--passphrase", ""}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("gpg %v: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+	gpg("--quick-gen-key", "deploy-test <test@invalid>", "ed25519", "sign", "never")
+	var fpr string
+	for _, line := range strings.Split(gpg("--list-keys", "--with-colons"), "\n") {
+		if f := strings.Split(line, ":"); len(f) > 9 && f[0] == "fpr" {
+			fpr = f[9]
+			break
+		}
+	}
+	if fpr == "" {
+		t.Fatal("no fingerprint for generated gpg key")
+	}
+	gpg("--quick-add-key", fpr, "cv25519", "encr", "never")
+	return fpr
 }
