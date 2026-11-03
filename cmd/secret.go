@@ -623,55 +623,61 @@ func listSecretFileKeys(path, label string) error {
 	return nil
 }
 
-// completionTargetNames returns all names that can be used as a secret target:
-// machines and groups from the hosts file, plus basenames of existing secrets YAMLs
-// (covers machines that have secrets but no hosts-file address entry).
-// Errors are silently ignored -- completion must never fail.
-func completionTargetNames(cfg *Config) []string {
-	seen := map[string]struct{}{}
-	for _, name := range completionMachineOrGroupNames(cfg) {
-		seen[name] = struct{}{}
-	}
+type secretFile struct {
+	name, path string
+}
+
+// secretFiles returns every existing machine and group secrets file, sorted
+// by path.
+func secretFiles(cfg *Config) ([]secretFile, error) {
+	var files []secretFile
 	for _, pat := range []string{
 		vars.MachineSecretsGlob(cfg.FlakeDir),
 		vars.SharedSecretsGlob(cfg.FlakeDir),
 	} {
-		if matches, err := filepath.Glob(pat); err == nil {
-			for _, p := range matches {
-				base := filepath.Base(p)
-				seen[base[:len(base)-len(".yaml")]] = struct{}{}
-			}
+		matches, err := filepath.Glob(pat)
+		if err != nil {
+			return nil, errors.Wrapf(err, "glob %s", pat)
+		}
+		for _, path := range matches {
+			files = append(files, secretFile{name: strings.TrimSuffix(filepath.Base(path), ".yaml"), path: path})
 		}
 	}
-	names := make([]string, 0, len(seen))
-	for name := range seen {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
+	return files, nil
+}
+
+// completionTargetNames returns all names that can be used as a secret target:
+// machines and groups from the hosts file, plus names of existing secrets
+// files (covers machines that have secrets but no hosts-file address entry).
+// Errors are silently ignored -- completion must never fail.
+func completionTargetNames(cfg *Config) []string {
+	return sortedUnique(append(completionMachineOrGroupNames(cfg), completionExistingTargetNames(cfg)...))
 }
 
 // completionExistingTargetNames returns only target names that have an existing
 // secrets file on disk.
 func completionExistingTargetNames(cfg *Config) []string {
-	seen := map[string]struct{}{}
-	for _, pat := range []string{
-		vars.MachineSecretsGlob(cfg.FlakeDir),
-		vars.SharedSecretsGlob(cfg.FlakeDir),
-	} {
-		if matches, err := filepath.Glob(pat); err == nil {
-			for _, p := range matches {
-				base := filepath.Base(p)
-				seen[base[:len(base)-len(".yaml")]] = struct{}{}
-			}
+	files, _ := secretFiles(cfg)
+	names := make([]string, 0, len(files))
+	for _, f := range files {
+		names = append(names, f.name)
+	}
+	return sortedUnique(names)
+}
+
+func sortedUnique(names []string) []string {
+	seen := make(map[string]struct{}, len(names))
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if _, ok := seen[n]; ok {
+			continue
 		}
+		seen[n] = struct{}{}
+		out = append(out, n)
 	}
-	names := make([]string, 0, len(seen))
-	for name := range seen {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	sort.Strings(out)
+	return out
 }
 
 // completionTargetKeys returns the top-level YAML keys in the named target's
@@ -691,27 +697,16 @@ func completionTargetKeys(cfg *Config, name string) []string {
 }
 
 func listAllSecrets(cfg *Config) error {
-	var paths []string
-	for _, pat := range []string{
-		vars.MachineSecretsGlob(cfg.FlakeDir),
-		vars.SharedSecretsGlob(cfg.FlakeDir),
-	} {
-		matches, err := filepath.Glob(pat)
-		if err != nil {
-			return errors.Wrapf(err, "glob %s", pat)
-		}
-		paths = append(paths, matches...)
+	files, err := secretFiles(cfg)
+	if err != nil {
+		return err
 	}
-	sort.Strings(paths)
-	if len(paths) == 0 {
+	if len(files) == 0 {
 		log.Info().Msg("no secrets found")
 		return nil
 	}
-
-	for _, path := range paths {
-		base := filepath.Base(path)
-		name := base[:len(base)-len(".yaml")]
-		if err := listSecretFileKeys(path, name); err != nil {
+	for _, f := range files {
+		if err := listSecretFileKeys(f.path, f.name); err != nil {
 			return err
 		}
 	}
