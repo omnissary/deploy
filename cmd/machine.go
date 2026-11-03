@@ -1085,17 +1085,22 @@ func ensureZFSKey(cfg *Config, machine string) error {
 func ensureZFSPoolKey(cfg *Config, machine, pool string) error {
 	secretKey := pool + "-root-key"
 	path := vars.MachineSecretsPath(cfg.FlakeDir, machine)
-	if _, err := sops.DecryptYAMLExtract(path, secretKey); err == nil {
+	created, err := sops.EnsureYAML(path, secretKey, func() (string, error) {
+		keyBytes := make([]byte, 32)
+		if _, err := rand.Read(keyBytes); err != nil {
+			return "", errors.Wrap(err, "generate ZFS key")
+		}
+		return hex.EncodeToString(keyBytes), nil
+	})
+	if err != nil {
+		return errors.Wrapf(err, "ensure ZFS root key %s for %s", secretKey, machine)
+	}
+	if created {
+		log.Info().Str("machine", machine).Str("pool", pool).Msg("wrote new ZFS root key")
+	} else {
 		log.Debug().Str("machine", machine).Str("pool", pool).Msg("ZFS key already present")
-		return nil
 	}
-	keyBytes := make([]byte, 32)
-	if _, err := rand.Read(keyBytes); err != nil {
-		return errors.Wrap(err, "generate ZFS key")
-	}
-	key := hex.EncodeToString(keyBytes)
-	log.Info().Str("machine", machine).Str("pool", pool).Msg("writing ZFS root key")
-	return sops.SetYAML(path, secretKey, key)
+	return nil
 }
 
 func prepareInitrdKeys(cfg *Config, machine, extraDir string) error {
