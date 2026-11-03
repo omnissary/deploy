@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
@@ -313,7 +315,7 @@ func secretCmd() *cli.Command {
 			},
 			{
 				Name:      "verify",
-				Usage:     "verify secret integrity/decryption for a target or all encrypted files",
+				Usage:     "verify decryption and integrity of a target, or of every encrypted file",
 				ArgsUsage: "[<name>]",
 				BashComplete: func(ctx *cli.Context) {
 					if ctx.NArg() > secretArgTarget {
@@ -324,16 +326,10 @@ func secretCmd() *cli.Command {
 						fmt.Fprintln(ctx.App.Writer, name)
 					}
 				},
-				Flags: []cli.Flag{
-					&cli.BoolFlag{
-						Name:  "fix",
-						Usage: "attempt to repair a broken secret file by re-encrypting it with the current .sops.yaml recipients",
-					},
-				},
 				Action: func(ctx *cli.Context) error {
 					cfg := getConfig(ctx)
 					if ctx.NArg() < 1 {
-						return verifyAllSecrets(cfg, ctx.Bool("fix"))
+						return verifyAllSecrets(cfg)
 					}
 					target, err := resolveSecretTarget(cfg, ctx.Args().Get(0))
 					if err != nil {
@@ -342,7 +338,55 @@ func secretCmd() *cli.Command {
 					if !fileExists(target.path) {
 						return errors.Errorf("no secrets file at %s", target.path)
 					}
-					return verifySecretFile(cfg, target.path, ctx.Bool("fix"))
+					return verifyFiles([]string{target.path})
+				},
+			},
+			{
+				Name:      "repair",
+				Usage:     "re-sign a file whose integrity check fails, after confirming its decrypted keys",
+				ArgsUsage: "<name> | --file <path>",
+				BashComplete: func(ctx *cli.Context) {
+					if ctx.NArg() > secretArgTarget {
+						return
+					}
+					cfg := completionConfig(ctx)
+					for _, name := range completionExistingTargetNames(cfg) {
+						fmt.Fprintln(ctx.App.Writer, name)
+					}
+				},
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:  "file",
+						Usage: "repair an encrypted file by path instead of by target name",
+					},
+					&cli.BoolFlag{
+						Name:  "yes",
+						Usage: "accept the decrypted content without prompting",
+					},
+				},
+				Action: func(ctx *cli.Context) error {
+					cfg := getConfig(ctx)
+					path := ctx.String("file")
+					switch {
+					case path != "" && ctx.NArg() > 0:
+						return errors.New("pass either <name> or --file, not both")
+					case path == "" && ctx.NArg() == 0:
+						return errors.New("usage: secret repair <name> | --file <path>")
+					case path == "":
+						target, err := resolveSecretTarget(cfg, ctx.Args().Get(0))
+						if err != nil {
+							return err
+						}
+						path = target.path
+					}
+					if !fileExists(path) {
+						return errors.Errorf("no encrypted file at %s", path)
+					}
+					accept := promptRepair(os.Stdin, os.Stderr)
+					if ctx.Bool("yes") {
+						accept = func(*sops.File) (bool, error) { return true, nil }
+					}
+					return repairSecretFile(cfg, path, accept)
 				},
 			},
 		},
@@ -496,69 +540,69 @@ func ensureSecrets(cfg *Config, machine string) error {
 	return createEncryptedYAMLIfMissing(cfg, vars.MachineSecretsPath(cfg.FlakeDir, machine), "machine", machine)
 }
 
-func verifySecretFile(cfg *Config, path string, fix bool) error {
-	log.Info().Str("file", path).Msg("verifying secret")
-	if err := sops.Verify(path); err != nil {
-		if !fix {
-			return err
-		}
-		log.Warn().Str("file", path).Msg("secret verification failed, attempting repair")
-		if repairErr := sops.Repair(cfg.SopsConf, path); repairErr != nil {
-			return errors.Wrapf(repairErr, "repair secret %s", path)
-		}
-		if verifyErr := sops.Verify(path); verifyErr != nil {
-			return errors.Wrapf(verifyErr, "verify repaired secret %s", path)
-		}
-		log.Info().Str("file", path).Msg("secret repaired")
-		return nil
-	}
-	log.Info().Str("file", path).Msg("secret verified")
-	return nil
-}
-
-func verifyAllSecrets(cfg *Config, fix bool) error {
+func verifyAllSecrets(cfg *Config) error {
 	paths := sops.ListEncryptedFiles(cfg.FlakeDir)
 	sort.Strings(paths)
 	if len(paths) == 0 {
 		log.Info().Msg("no encrypted files found")
 		return nil
 	}
+	return verifyFiles(paths)
+}
 
+// verifyFiles checks every path and reports all failures together rather than
+// stopping at the first one.
+func verifyFiles(paths []string) error {
+	var failed []string
 	for i, path := range paths {
-		log.Info().
-			Int("index", i+1).
-			Int("total", len(paths)).
-			Str("file", path).
-			Msg("verifying secret")
 		if err := sops.Verify(path); err != nil {
-			if !fix {
-				return err
-			}
-			log.Warn().
-				Int("index", i+1).
-				Int("total", len(paths)).
-				Str("file", path).
-				Msg("secret verification failed, attempting repair")
-			if repairErr := sops.Repair(cfg.SopsConf, path); repairErr != nil {
-				return errors.Wrapf(repairErr, "repair secret %s", path)
-			}
-			if verifyErr := sops.Verify(path); verifyErr != nil {
-				return errors.Wrapf(verifyErr, "verify repaired secret %s", path)
-			}
-			log.Info().
-				Int("index", i+1).
-				Int("total", len(paths)).
-				Str("file", path).
-				Msg("secret repaired")
+			log.Error().Err(err).Int("index", i+1).Int("total", len(paths)).Str("file", path).Msg("secret verification failed")
+			failed = append(failed, path)
 			continue
 		}
-		log.Info().
-			Int("index", i+1).
-			Int("total", len(paths)).
-			Str("file", path).
-			Msg("secret verified")
+		log.Info().Int("index", i+1).Int("total", len(paths)).Str("file", path).Msg("secret verified")
+	}
+	if len(failed) > 0 {
+		return errors.Errorf("%d of %d secret files failed verification; inspect them and use 'secret repair':\n  %s",
+			len(failed), len(paths), strings.Join(failed, "\n  "))
 	}
 	return nil
+}
+
+func repairSecretFile(cfg *Config, path string, accept func(*sops.File) (bool, error)) error {
+	repaired, err := sops.Repair(cfg.SopsConf, path, accept)
+	if err != nil {
+		return errors.Wrapf(err, "repair %s", path)
+	}
+	if !repaired {
+		log.Info().Str("file", path).Msg("secret verifies, nothing to repair")
+		return nil
+	}
+	log.Info().Str("file", path).Msg("secret repaired")
+	return nil
+}
+
+// promptRepair asks on out whether content decrypted without the integrity
+// check should be re-signed, reading the answer from in.
+func promptRepair(in io.Reader, out io.Writer) func(*sops.File) (bool, error) {
+	return func(f *sops.File) (bool, error) {
+		fmt.Fprintf(out, "%s failed its integrity check: it was modified outside of sops or is corrupted.\n", f.Path())
+		fmt.Fprintf(out, "Decrypted without the check, it contains these keys:\n")
+		for _, k := range f.Keys() {
+			fmt.Fprintf(out, "  %s\n", k)
+		}
+		fmt.Fprintf(out, "Re-sign this content as trusted? [y/N] ")
+		answer, err := bufio.NewReader(in).ReadString('\n')
+		if err != nil && err != io.EOF {
+			return false, errors.Wrap(err, "read answer")
+		}
+		switch strings.ToLower(strings.TrimSpace(answer)) {
+		case "y", "yes":
+			return true, nil
+		default:
+			return false, nil
+		}
+	}
 }
 
 func updateAllSecrets(cfg *Config) error {

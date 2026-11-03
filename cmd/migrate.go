@@ -102,7 +102,7 @@ func runMigrations(cfg *Config, currentVersion int) error {
 	if err := updateAllSecrets(cfg); err != nil {
 		return errors.Wrap(err, "update all secrets")
 	}
-	if err := verifyAllSecrets(cfg, false); err != nil {
+	if err := verifyAllSecrets(cfg); err != nil {
 		return errors.Wrap(err, "secret verify")
 	}
 	log.Info().Msg("migrate complete")

@@ -163,17 +163,36 @@ func UpdateKeys(confPath, path string) error {
 	})
 }
 
-// Repair decrypts path ignoring its MAC, applies the current recipients and
-// rewrites it with a fresh MAC. This accepts whatever content is in the file.
-func Repair(confPath, path string) error {
+// ErrRepairDeclined is returned by Repair when accept rejects the content.
+var ErrRepairDeclined = errors.New("repair declined")
+
+// Repair re-signs a file whose MAC no longer matches. It is a no-op returning
+// false for a file that verifies. Otherwise the file is decrypted without the
+// MAC check and handed to accept, which decides whether the content, which may
+// have been modified outside of SOPS, is trustworthy. On acceptance the
+// current recipients are applied and the file is rewritten with a fresh MAC.
+func Repair(confPath, path string, accept func(*File) (bool, error)) (bool, error) {
+	if err := Verify(path); err == nil {
+		return false, nil
+	}
 	f, err := OpenUnverified(path)
 	if err != nil {
-		return err
+		return false, err
+	}
+	ok, err := accept(f)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, errors.Wrapf(ErrRepairDeclined, "%s", path)
 	}
 	if err := f.Rekey(confPath); err != nil {
-		return err
+		return false, err
 	}
-	return f.Save()
+	if err := f.Save(); err != nil {
+		return false, err
+	}
+	return true, Verify(path)
 }
 
 // writeNew atomically creates path with data, failing if path exists.
