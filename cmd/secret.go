@@ -120,7 +120,7 @@ func secretCmd() *cli.Command {
 						return errors.Errorf("no secrets file at %s", target.path)
 					}
 					log.Debug().Str("target", target.name).Str("key", key).Msg("secret get")
-					val, err := sops.DecryptYAMLExtract(target.path, key)
+					val, err := getSecret(target.path, key)
 					if err != nil {
 						return errors.Wrapf(err, "get secret %s/%s", target.name, key)
 					}
@@ -162,7 +162,7 @@ func secretCmd() *cli.Command {
 					if err != nil {
 						return errors.Wrap(err, "read stdin")
 					}
-					if err := sops.SetYAML(target.path, key, secretValueFromInput(raw)); err != nil {
+					if err := setSecret(target.path, key, secretValueFromInput(raw)); err != nil {
 						return errors.Wrapf(err, "set secret %s/%s", target.name, key)
 					}
 					log.Info().Str("target", target.name).Str("key", key).Msg("secret set")
@@ -200,7 +200,7 @@ func secretCmd() *cli.Command {
 						return errors.Errorf("no secrets file at %s", target.path)
 					}
 					log.Debug().Str("target", target.name).Str("key", key).Msg("secret del")
-					if err := sops.DeleteYAML(target.path, key); err != nil {
+					if err := deleteSecret(target.path, key); err != nil {
 						return errors.Wrapf(err, "del secret %s/%s", target.name, key)
 					}
 					log.Info().Str("target", target.name).Str("key", key).Msg("secret deleted")
@@ -292,18 +292,11 @@ func secretCmd() *cli.Command {
 						Str("src", src.name).Str("src-key", srcKey).
 						Str("dst", dst.name).Str("dst-key", dstKey).
 						Msg("secret mv")
-					val, err := sops.DecryptYAMLExtract(src.path, srcKey)
-					if err != nil {
-						return errors.Wrapf(err, "read secret %s/%s", src.name, srcKey)
-					}
 					if err := ensureSecretFile(cfg, dst); err != nil {
 						return err
 					}
-					if err := sops.SetYAML(dst.path, dstKey, val); err != nil {
-						return errors.Wrapf(err, "write secret %s/%s", dst.name, dstKey)
-					}
-					if err := sops.DeleteYAML(src.path, srcKey); err != nil {
-						return errors.Wrapf(err, "delete secret %s/%s", src.name, srcKey)
+					if err := moveSecret(src.path, srcKey, dst.path, dstKey); err != nil {
+						return errors.Wrapf(err, "move secret %s/%s to %s/%s", src.name, srcKey, dst.name, dstKey)
 					}
 					log.Info().
 						Str("src", src.name).Str("src-key", srcKey).
@@ -348,6 +341,62 @@ func secretCmd() *cli.Command {
 			},
 		},
 	}
+}
+
+func getSecret(path, key string) (string, error) {
+	f, err := sops.Open(path)
+	if err != nil {
+		return "", err
+	}
+	return f.Get(key)
+}
+
+func setSecret(path, key, value string) error {
+	return sops.Edit(path, func(f *sops.File) error {
+		f.Set(key, value)
+		return nil
+	})
+}
+
+func deleteSecret(path, key string) error {
+	return sops.Edit(path, func(f *sops.File) error {
+		return f.Delete(key)
+	})
+}
+
+// moveSecret moves srcKey in srcPath to dstKey in dstPath. Within one file the
+// move is a single atomic rewrite. Across files the destination is written
+// before the source key is deleted, so a failure can only leave a duplicate.
+func moveSecret(srcPath, srcKey, dstPath, dstKey string) error {
+	if srcPath == dstPath && srcKey == dstKey {
+		return errors.New("source and destination are identical")
+	}
+	if srcPath == dstPath {
+		return sops.Edit(srcPath, func(f *sops.File) error {
+			val, err := f.Get(srcKey)
+			if err != nil {
+				return err
+			}
+			f.Set(dstKey, val)
+			return f.Delete(srcKey)
+		})
+	}
+
+	src, err := sops.Open(srcPath)
+	if err != nil {
+		return err
+	}
+	val, err := src.Get(srcKey)
+	if err != nil {
+		return err
+	}
+	if err := setSecret(dstPath, dstKey, val); err != nil {
+		return err
+	}
+	if err := src.Delete(srcKey); err != nil {
+		return err
+	}
+	return src.Save()
 }
 
 // resolveSecretTarget interprets name as either a group declared in the hosts
