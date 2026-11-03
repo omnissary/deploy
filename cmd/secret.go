@@ -243,6 +243,12 @@ func secretCmd() *cli.Command {
 				Name:      "mv",
 				Usage:     "move a secret key from one target to another, or rename it within the same target",
 				ArgsUsage: "<src-name> <src-key> <dst-name> [<dst-key>]",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:  "force",
+						Usage: "overwrite the destination key if it already exists",
+					},
+				},
 				BashComplete: func(ctx *cli.Context) {
 					cfg := completionConfig(ctx)
 					switch ctx.NArg() {
@@ -295,7 +301,7 @@ func secretCmd() *cli.Command {
 					if err := ensureSecretFile(cfg, dst); err != nil {
 						return err
 					}
-					if err := moveSecret(src.path, srcKey, dst.path, dstKey); err != nil {
+					if err := moveSecret(src.path, srcKey, dst.path, dstKey, ctx.Bool("force")); err != nil {
 						return errors.Wrapf(err, "move secret %s/%s to %s/%s", src.name, srcKey, dst.name, dstKey)
 					}
 					log.Info().
@@ -364,10 +370,11 @@ func deleteSecret(path, key string) error {
 	})
 }
 
-// moveSecret moves srcKey in srcPath to dstKey in dstPath. Within one file the
+// moveSecret moves srcKey in srcPath to dstKey in dstPath, refusing to replace
+// an existing destination key unless overwrite is set. Within one file the
 // move is a single atomic rewrite. Across files the destination is written
 // before the source key is deleted, so a failure can only leave a duplicate.
-func moveSecret(srcPath, srcKey, dstPath, dstKey string) error {
+func moveSecret(srcPath, srcKey, dstPath, dstKey string, overwrite bool) error {
 	if srcPath == dstPath && srcKey == dstKey {
 		return errors.New("source and destination are identical")
 	}
@@ -375,6 +382,9 @@ func moveSecret(srcPath, srcKey, dstPath, dstKey string) error {
 		return sops.Edit(srcPath, func(f *sops.File) error {
 			val, err := f.Get(srcKey)
 			if err != nil {
+				return err
+			}
+			if err := checkMoveDestination(f, dstKey, overwrite); err != nil {
 				return err
 			}
 			f.Set(dstKey, val)
@@ -390,13 +400,26 @@ func moveSecret(srcPath, srcKey, dstPath, dstKey string) error {
 	if err != nil {
 		return err
 	}
-	if err := setSecret(dstPath, dstKey, val); err != nil {
+	if err := sops.Edit(dstPath, func(f *sops.File) error {
+		if err := checkMoveDestination(f, dstKey, overwrite); err != nil {
+			return err
+		}
+		f.Set(dstKey, val)
+		return nil
+	}); err != nil {
 		return err
 	}
 	if err := src.Delete(srcKey); err != nil {
 		return err
 	}
 	return src.Save()
+}
+
+func checkMoveDestination(f *sops.File, key string, overwrite bool) error {
+	if !overwrite && f.Has(key) {
+		return errors.Errorf("key %q already exists in %s; use --force to overwrite", key, f.Path())
+	}
+	return nil
 }
 
 // resolveSecretTarget interprets name as either a group declared in the hosts

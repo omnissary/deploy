@@ -138,7 +138,7 @@ func TestMoveSecretRenameWithinFile(t *testing.T) {
 	fl := sopstest.NewFlake(t)
 	path := newSecretsFile(t, fl, "m", map[string]string{"rootfs": "keep", "old": "v"})
 
-	if err := moveSecret(path, "old", path, "new"); err != nil {
+	if err := moveSecret(path, "old", path, "new", false); err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]string{"rootfs": "keep", "new": "v"}
@@ -152,7 +152,7 @@ func TestMoveSecretIdenticalSourceAndDestinationIsRejected(t *testing.T) {
 	path := newSecretsFile(t, fl, "m", map[string]string{"k": "v"})
 	before := fileBytes(t, path)
 
-	if err := moveSecret(path, "k", path, "k"); err == nil {
+	if err := moveSecret(path, "k", path, "k", false); err == nil {
 		t.Fatal("expected error")
 	}
 	if fileBytes(t, path) != before {
@@ -165,7 +165,7 @@ func TestMoveSecretMissingSourceKeyWithinFile(t *testing.T) {
 	path := newSecretsFile(t, fl, "m", map[string]string{"k": "v"})
 	before := fileBytes(t, path)
 
-	if err := moveSecret(path, "absent", path, "new"); !errors.Is(err, sops.ErrKeyNotFound) {
+	if err := moveSecret(path, "absent", path, "new", false); !errors.Is(err, sops.ErrKeyNotFound) {
 		t.Fatalf("expected ErrKeyNotFound, got %v", err)
 	}
 	if fileBytes(t, path) != before {
@@ -178,7 +178,7 @@ func TestMoveSecretAcrossFiles(t *testing.T) {
 	src := newSecretsFile(t, fl, "a", map[string]string{"k": "v", "stay": "s"})
 	dst := newSecretsFile(t, fl, "b", map[string]string{"other": "o"})
 
-	if err := moveSecret(src, "k", dst, "k2"); err != nil {
+	if err := moveSecret(src, "k", dst, "k2", false); err != nil {
 		t.Fatal(err)
 	}
 	if got := secretValues(t, src); !reflect.DeepEqual(got, map[string]string{"stay": "s"}) {
@@ -195,7 +195,7 @@ func TestMoveSecretAcrossFilesMissingSourceKeyTouchesNothing(t *testing.T) {
 	dst := newSecretsFile(t, fl, "b", map[string]string{"other": "o"})
 	srcBefore, dstBefore := fileBytes(t, src), fileBytes(t, dst)
 
-	if err := moveSecret(src, "absent", dst, "x"); !errors.Is(err, sops.ErrKeyNotFound) {
+	if err := moveSecret(src, "absent", dst, "x", false); !errors.Is(err, sops.ErrKeyNotFound) {
 		t.Fatalf("expected ErrKeyNotFound, got %v", err)
 	}
 	if fileBytes(t, src) != srcBefore || fileBytes(t, dst) != dstBefore {
@@ -208,10 +208,65 @@ func TestMoveSecretAcrossFilesKeepsSourceWhenDestinationFails(t *testing.T) {
 	src := newSecretsFile(t, fl, "a", map[string]string{"k": "v"})
 	srcBefore := fileBytes(t, src)
 
-	if err := moveSecret(src, "k", filepath.Join(fl.Dir, "missing.yaml"), "k"); err == nil {
+	if err := moveSecret(src, "k", filepath.Join(fl.Dir, "missing.yaml"), "k", false); err == nil {
 		t.Fatal("expected error for missing destination file")
 	}
 	if fileBytes(t, src) != srcBefore {
 		t.Fatal("source modified although destination write failed")
+	}
+}
+
+func TestMoveSecretRefusesExistingDestinationKeyWithinFile(t *testing.T) {
+	fl := sopstest.NewFlake(t)
+	path := newSecretsFile(t, fl, "m", map[string]string{"a": "1", "b": "2"})
+	before := fileBytes(t, path)
+
+	if err := moveSecret(path, "a", path, "b", false); err == nil {
+		t.Fatal("expected refusal to overwrite")
+	}
+	if fileBytes(t, path) != before {
+		t.Fatal("file modified")
+	}
+}
+
+func TestMoveSecretOverwritesWithinFileWhenForced(t *testing.T) {
+	fl := sopstest.NewFlake(t)
+	path := newSecretsFile(t, fl, "m", map[string]string{"a": "1", "b": "2"})
+
+	if err := moveSecret(path, "a", path, "b", true); err != nil {
+		t.Fatal(err)
+	}
+	if got := secretValues(t, path); !reflect.DeepEqual(got, map[string]string{"b": "1"}) {
+		t.Fatalf("values = %v", got)
+	}
+}
+
+func TestMoveSecretRefusesExistingDestinationKeyAcrossFiles(t *testing.T) {
+	fl := sopstest.NewFlake(t)
+	src := newSecretsFile(t, fl, "a", map[string]string{"k": "new"})
+	dst := newSecretsFile(t, fl, "b", map[string]string{"k": "precious"})
+	srcBefore, dstBefore := fileBytes(t, src), fileBytes(t, dst)
+
+	if err := moveSecret(src, "k", dst, "k", false); err == nil {
+		t.Fatal("expected refusal to overwrite")
+	}
+	if fileBytes(t, src) != srcBefore || fileBytes(t, dst) != dstBefore {
+		t.Fatal("files modified")
+	}
+}
+
+func TestMoveSecretOverwritesAcrossFilesWhenForced(t *testing.T) {
+	fl := sopstest.NewFlake(t)
+	src := newSecretsFile(t, fl, "a", map[string]string{"k": "new"})
+	dst := newSecretsFile(t, fl, "b", map[string]string{"k": "old"})
+
+	if err := moveSecret(src, "k", dst, "k", true); err != nil {
+		t.Fatal(err)
+	}
+	if got := secretValues(t, dst); !reflect.DeepEqual(got, map[string]string{"k": "new"}) {
+		t.Fatalf("dst = %v", got)
+	}
+	if got := secretValues(t, src); len(got) != 0 {
+		t.Fatalf("src = %v", got)
 	}
 }
