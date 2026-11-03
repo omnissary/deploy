@@ -476,70 +476,25 @@ func ensureInitrdKey(cfg *Config, machine string) error {
 		return err
 	}
 
-	dir := vars.MachineInitrdKeyDir(cfg.FlakeDir, machine)
 	privPath := vars.MachineInitrdKeyPath(cfg.FlakeDir, machine)
 	pubPath := vars.MachineInitrdKeyPubPath(cfg.FlakeDir, machine)
-	generated := false
-
-	privExists := fileExists(privPath)
-	pubExists := fileExists(pubPath)
-
-	switch {
-	case privExists && !pubExists:
-		return errors.Errorf("missing public key for %s initrd SSH key: %s", machine, pubPath)
-	case !privExists && pubExists:
-		return errors.Errorf("missing encrypted private key for %s initrd SSH key: %s", machine, privPath)
-	case !privExists:
-		log.Info().Str("machine", machine).Msg("generating initrd ssh key pair")
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return errors.Wrapf(err, "create dir %s", dir)
-		}
-
-		pair, err := sshkey.Generate()
-		if err != nil {
-			return err
-		}
-
-		privPEM, err := sshkey.MarshalPrivatePEM(pair)
-		if err != nil {
-			return err
-		}
-
-		comment := fmt.Sprintf("root@%s-initrd", machine)
-		pubLine, err := sshkey.MarshalPublicAuthorizedKey(pair, comment)
-		if err != nil {
-			return err
-		}
-
-		if err := sops.Create(cfg.SopsConf, privPath, privPEM); err != nil {
-			return errors.Wrapf(err, "encrypt initrd private key for %s", machine)
-		}
-		if err := os.WriteFile(pubPath, pubLine, 0o644); err != nil {
-			return errors.Wrapf(err, "write initrd public key")
-		}
-		generated = true
-		log.Info().Str("machine", machine).Str("path", pubPath).Msg("initrd key written")
-	}
-
-	pubLine, err := os.ReadFile(pubPath)
+	comment := fmt.Sprintf("root@%s-initrd", machine)
+	res, err := keypair.Ensure(cfg.SopsConf, keypair.Spec{
+		Name:     machine + " initrd key",
+		Priv:     privPath,
+		Pub:      pubPath,
+		Generate: sshKeyGenerator(comment),
+		Derive:   sshKeyDeriver(comment),
+	})
 	if err != nil {
-		return errors.Wrapf(err, "read initrd public key")
+		return err
 	}
 
-	// Only decrypt and verify immediately after generation. Existing encrypted
-	// keys are consumed later during init/deploy; verifying on every build/eval
-	// causes an unnecessary secret decryption and YubiKey touch.
-	if generated {
-		privPEM, err := sops.ReadFile(privPath)
+	if res != keypair.Existing {
+		pubLine, err := os.ReadFile(pubPath)
 		if err != nil {
-			return errors.Wrapf(err, "decrypt initrd private key for %s", machine)
+			return errors.Wrapf(err, "read initrd public key")
 		}
-		if err := sshkey.VerifyPair(privPEM, pubLine); err != nil {
-			return errors.Wrapf(err, "key pair mismatch for %s initrd key", machine)
-		}
-	}
-
-	if generated {
 		fmt.Printf("secret:      %s\n", privPath)
 		fmt.Printf("deploy path: /etc/secrets/initrd_host_ed25519_key\n")
 		fmt.Printf("public:      %s", pubLine)

@@ -183,3 +183,106 @@ func TestEnsureHostKeyKeepsAdminAccess(t *testing.T) {
 		}
 	}
 }
+
+func TestEnsureInitrdKeyGeneratesCommentedPair(t *testing.T) {
+	af := newAdminFlake(t)
+	const m = "m"
+	if err := ensureHostKey(af.cfg, m); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureInitrdKey(af.cfg, m); err != nil {
+		t.Fatalf("ensureInitrdKey: %v", err)
+	}
+	pub := mustRead(t, vars.MachineInitrdKeyPubPath(af.cfg.FlakeDir, m))
+	if !strings.HasSuffix(string(pub), " root@m-initrd\n") {
+		t.Fatalf("public key line %q lacks initrd comment", pub)
+	}
+	priv, err := sops.ReadFile(vars.MachineInitrdKeyPath(af.cfg.FlakeDir, m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sshkey.VerifyPair(priv, pub); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsureInitrdKeyIsIdempotent(t *testing.T) {
+	af := newAdminFlake(t)
+	const m = "m"
+	if err := ensureHostKey(af.cfg, m); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureInitrdKey(af.cfg, m); err != nil {
+		t.Fatal(err)
+	}
+	priv := mustRead(t, vars.MachineInitrdKeyPath(af.cfg.FlakeDir, m))
+	pub := mustRead(t, vars.MachineInitrdKeyPubPath(af.cfg.FlakeDir, m))
+
+	if err := ensureInitrdKey(af.cfg, m); err != nil {
+		t.Fatal(err)
+	}
+	if string(priv) != string(mustRead(t, vars.MachineInitrdKeyPath(af.cfg.FlakeDir, m))) ||
+		string(pub) != string(mustRead(t, vars.MachineInitrdKeyPubPath(af.cfg.FlakeDir, m))) {
+		t.Fatal("initrd key rewritten")
+	}
+}
+
+func TestEnsureInitrdKeyRestoresMissingPublicKey(t *testing.T) {
+	af := newAdminFlake(t)
+	const m = "m"
+	if err := ensureHostKey(af.cfg, m); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureInitrdKey(af.cfg, m); err != nil {
+		t.Fatal(err)
+	}
+	privPath := vars.MachineInitrdKeyPath(af.cfg.FlakeDir, m)
+	pubPath := vars.MachineInitrdKeyPubPath(af.cfg.FlakeDir, m)
+	priv, pub := mustRead(t, privPath), mustRead(t, pubPath)
+	if err := os.Remove(pubPath); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureInitrdKey(af.cfg, m); err != nil {
+		t.Fatalf("ensureInitrdKey: %v", err)
+	}
+	if string(mustRead(t, privPath)) != string(priv) {
+		t.Fatal("private key changed")
+	}
+	if string(mustRead(t, pubPath)) != string(pub) {
+		t.Fatalf("restored %q, want %q", mustRead(t, pubPath), pub)
+	}
+}
+
+func TestEnsureInitrdKeyWithMissingPrivateKeyFails(t *testing.T) {
+	af := newAdminFlake(t)
+	const m = "m"
+	if err := ensureHostKey(af.cfg, m); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureInitrdKey(af.cfg, m); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(vars.MachineInitrdKeyPath(af.cfg.FlakeDir, m)); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureInitrdKey(af.cfg, m); err == nil {
+		t.Fatal("expected error")
+	}
+	if fileExists(vars.MachineInitrdKeyPath(af.cfg.FlakeDir, m)) {
+		t.Fatal("a new private key was generated")
+	}
+}
+
+func TestEnsureInitrdKeyWithoutHostKeyRuleWritesNothing(t *testing.T) {
+	af := newAdminFlake(t)
+	const m = "m"
+
+	if err := ensureInitrdKey(af.cfg, m); err == nil {
+		t.Fatal("expected failure without a creation rule for the machine")
+	}
+	if fileExists(vars.MachineInitrdKeyPath(af.cfg.FlakeDir, m)) || fileExists(vars.MachineInitrdKeyPubPath(af.cfg.FlakeDir, m)) {
+		t.Fatal("files left behind")
+	}
+}
