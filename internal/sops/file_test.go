@@ -17,11 +17,8 @@ import (
 func newEncryptedYAML(t *testing.T, fl sopstest.Flake, name, plain string) string {
 	t.Helper()
 	path := filepath.Join(fl.Dir, name)
-	if err := os.WriteFile(path, []byte(plain), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := EncryptYAML(fl.SopsConf, path); err != nil {
-		t.Fatalf("EncryptYAML: %v", err)
+	if err := Create(fl.SopsConf, path, []byte(plain)); err != nil {
+		t.Fatalf("Create: %v", err)
 	}
 	return path
 }
@@ -29,12 +26,8 @@ func newEncryptedYAML(t *testing.T, fl sopstest.Flake, name, plain string) strin
 func newEncryptedBinary(t *testing.T, fl sopstest.Flake, name string, plain []byte) string {
 	t.Helper()
 	path := filepath.Join(fl.Dir, name)
-	out, err := EncryptBinary(fl.SopsConf, path, plain)
-	if err != nil {
-		t.Fatalf("EncryptBinary: %v", err)
-	}
-	if err := os.WriteFile(path, out, 0o600); err != nil {
-		t.Fatal(err)
+	if err := Create(fl.SopsConf, path, plain); err != nil {
+		t.Fatalf("Create: %v", err)
 	}
 	return path
 }

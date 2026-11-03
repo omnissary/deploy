@@ -34,11 +34,8 @@ func setupAgeFlake(t *testing.T) (confPath, secretsPath string) {
 	if err := os.MkdirAll(filepath.Dir(secretsPath), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(secretsPath, []byte("{}\n"), 0o600); err != nil {
-		t.Fatalf("write empty secrets: %v", err)
-	}
-	if err := EncryptYAML(confPath, secretsPath); err != nil {
-		t.Fatalf("EncryptYAML: %v", err)
+	if err := Create(confPath, secretsPath, []byte("{}\n")); err != nil {
+		t.Fatalf("Create: %v", err)
 	}
 	return confPath, secretsPath
 }

@@ -46,60 +46,6 @@ func decryptionOrder() []string {
 	return append([]string{}, gosops.DefaultDecryptionOrder...)
 }
 
-// EncryptBinary encrypts raw bytes as a sops binary file.
-// filePath is used only for matching .sops.yaml creation rules; the file does
-// not need to exist. confPath is the path to .sops.yaml.
-func EncryptBinary(confPath, filePath string, plaintext []byte) ([]byte, error) {
-	log.Debug().Str("file", filePath).Msg("sops encrypt binary")
-
-	cfg, err := config.LoadCreationRuleForFile(confPath, filePath, nil)
-	if err != nil {
-		return nil, errors.Wrapf(err, "load sops creation rule for %s", filePath)
-	}
-
-	storesCfg := config.NewStoresConfig()
-	store := common.StoreForFormat(formats.Binary, storesCfg)
-
-	branches, err := store.LoadPlainFile(plaintext)
-	if err != nil {
-		return nil, errors.Wrap(err, "sops load plain binary")
-	}
-
-	absPath, err := filepath.Abs(filePath)
-	if err != nil {
-		return nil, errors.Wrap(err, "abs path")
-	}
-
-	tree := gosops.Tree{
-		Branches: branches,
-		Metadata: gosops.Metadata{
-			KeyGroups:       cfg.KeyGroups,
-			ShamirThreshold: cfg.ShamirThreshold,
-			Version:         version.Version,
-		},
-		FilePath: absPath,
-	}
-
-	dataKey, errs := tree.GenerateDataKeyWithKeyServices(keyServices())
-	if len(errs) > 0 {
-		return nil, errors.Wrapf(errs[0], "sops generate data key for %s", filePath)
-	}
-
-	if err := common.EncryptTree(common.EncryptTreeOpts{
-		DataKey: dataKey,
-		Tree:    &tree,
-		Cipher:  newCipher(),
-	}); err != nil {
-		return nil, errors.Wrap(err, "sops encrypt tree")
-	}
-
-	out, err := store.EmitEncryptedFile(tree)
-	if err != nil {
-		return nil, errors.Wrap(err, "sops emit encrypted binary")
-	}
-	return out, nil
-}
-
 // DecryptBinary decrypts a sops binary-format file and returns plaintext bytes.
 func DecryptBinary(filePath string) ([]byte, error) {
 	log.Debug().Str("file", filePath).Msg("sops decrypt binary")
@@ -128,30 +74,25 @@ func DecryptBinary(filePath string) ([]byte, error) {
 	return plain, nil
 }
 
-// EncryptYAML encrypts a plaintext YAML file in-place.
-// confPath is the path to .sops.yaml.
-func EncryptYAML(confPath, filePath string) error {
-	log.Debug().Str("file", filePath).Msg("sops encrypt yaml")
+// Create encrypts plaintext with the recipients of the .sops.yaml creation
+// rule matching path and writes it to path. The format (YAML or binary) is
+// derived from the extension. Plaintext never touches the disk, and Create
+// fails without writing anything if path already exists.
+func Create(confPath, path string, plaintext []byte) error {
+	log.Debug().Str("file", path).Msg("sops create")
 
-	cfg, err := config.LoadCreationRuleForFile(confPath, filePath, nil)
+	cfg, err := config.LoadCreationRuleForFile(confPath, path, nil)
 	if err != nil {
-		return errors.Wrapf(err, "load sops creation rule for %s", filePath)
+		return errors.Wrapf(err, "load sops creation rule for %s", path)
 	}
 
-	rawData, err := os.ReadFile(filePath)
+	store := common.StoreForFormat(formats.FormatForPath(path), config.NewStoresConfig())
+	branches, err := store.LoadPlainFile(plaintext)
 	if err != nil {
-		return errors.Wrapf(err, "read %s", filePath)
+		return errors.Wrapf(err, "sops load plaintext for %s", path)
 	}
 
-	storesCfg := config.NewStoresConfig()
-	store := common.StoreForFormat(formats.Yaml, storesCfg)
-
-	branches, err := store.LoadPlainFile(rawData)
-	if err != nil {
-		return errors.Wrap(err, "sops load plain yaml")
-	}
-
-	absPath, err := filepath.Abs(filePath)
+	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return errors.Wrap(err, "abs path")
 	}
@@ -168,7 +109,7 @@ func EncryptYAML(confPath, filePath string) error {
 
 	dataKey, errs := tree.GenerateDataKeyWithKeyServices(keyServices())
 	if len(errs) > 0 {
-		return errors.Wrapf(errs[0], "sops generate data key for %s", filePath)
+		return errors.Wrapf(errs[0], "sops generate data key for %s", path)
 	}
 
 	if err := common.EncryptTree(common.EncryptTreeOpts{
@@ -176,15 +117,14 @@ func EncryptYAML(confPath, filePath string) error {
 		Tree:    &tree,
 		Cipher:  newCipher(),
 	}); err != nil {
-		return errors.Wrap(err, "sops encrypt tree")
+		return errors.Wrapf(err, "sops encrypt %s", path)
 	}
 
 	out, err := store.EmitEncryptedFile(tree)
 	if err != nil {
-		return errors.Wrap(err, "sops emit encrypted yaml")
+		return errors.Wrapf(err, "sops emit %s", path)
 	}
-
-	return writeAtomic(filePath, out, 0o600)
+	return writeNew(path, out, 0o600)
 }
 
 // DecryptYAMLExtract decrypts a YAML secrets file and returns the string value at key.
@@ -488,6 +428,34 @@ func UpdateKeys(confPath, filePath string) error {
 	}
 
 	return writeAtomic(filePath, out, 0o600)
+}
+
+// writeNew atomically creates path with data, failing if path exists.
+func writeNew(path string, data []byte, mode os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return errors.Wrapf(err, "create tmp for %s", path)
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return errors.Wrapf(err, "write tmp for %s", path)
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return errors.Wrapf(err, "chmod tmp for %s", path)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return errors.Wrapf(err, "sync tmp for %s", path)
+	}
+	if err := tmp.Close(); err != nil {
+		return errors.Wrapf(err, "close tmp for %s", path)
+	}
+	if err := os.Link(tmp.Name(), path); err != nil {
+		return errors.Wrapf(err, "create %s", path)
+	}
+	return nil
 }
 
 func writeAtomic(path string, data []byte, mode os.FileMode) error {

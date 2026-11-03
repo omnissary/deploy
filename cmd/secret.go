@@ -411,10 +411,7 @@ func createEncryptedYAMLIfMissing(cfg *Config, path, kind, name string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return errors.Wrapf(err, "create dir for %s", path)
 	}
-	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
-		return errors.Wrapf(err, "write empty secrets for %s", name)
-	}
-	if err := sops.EncryptYAML(cfg.SopsConf, path); err != nil {
+	if err := sops.Create(cfg.SopsConf, path, []byte("{}\n")); err != nil {
 		return errors.Wrapf(err, "encrypt secrets for %s", name)
 	}
 	return nil

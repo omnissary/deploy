@@ -291,12 +291,8 @@ func ensureSessionKey(cfg *Config, name string) error {
 		return errors.Wrap(err, "generate session age key")
 	}
 
-	encrypted, err := sops.EncryptBinary(cfg.SopsConf, privPath, []byte(pair.Private))
-	if err != nil {
+	if err := sops.Create(cfg.SopsConf, privPath, []byte(pair.Private)); err != nil {
 		return errors.Wrap(err, "encrypt session age key")
-	}
-	if err := os.WriteFile(privPath, encrypted, 0o600); err != nil {
-		return errors.Wrapf(err, "write encrypted session key")
 	}
 	if err := os.WriteFile(pubPath, []byte(pair.Public+"\n"), 0o644); err != nil {
 		return errors.Wrapf(err, "write session public key")
@@ -415,7 +411,7 @@ func ensureHostKey(cfg *Config, machine string) error {
 		}
 
 		// Derive age key now so we can set up the sops recipient rule before
-		// encrypting — the rule must exist for EncryptBinary to succeed.
+		// encrypting — the rule must exist for sops.Create to succeed.
 		ageKey, err := sshkey.ToAge(pubLine)
 		if err != nil {
 			return errors.Wrapf(err, "derive age key for %s", machine)
@@ -424,12 +420,8 @@ func ensureHostKey(cfg *Config, machine string) error {
 			return errors.Wrapf(err, "update sops rules for %s", machine)
 		}
 
-		encrypted, err := sops.EncryptBinary(cfg.SopsConf, privPath, privPEM)
-		if err != nil {
+		if err := sops.Create(cfg.SopsConf, privPath, privPEM); err != nil {
 			return errors.Wrapf(err, "encrypt host private key for %s", machine)
-		}
-		if err := os.WriteFile(privPath, encrypted, 0o600); err != nil {
-			return errors.Wrapf(err, "write encrypted host private key")
 		}
 		if err := os.WriteFile(pubPath, pubLine, 0o644); err != nil {
 			return errors.Wrapf(err, "write host public key")
@@ -502,12 +494,8 @@ func ensureInitrdKey(cfg *Config, machine string) error {
 			return err
 		}
 
-		encrypted, err := sops.EncryptBinary(cfg.SopsConf, privPath, privPEM)
-		if err != nil {
+		if err := sops.Create(cfg.SopsConf, privPath, privPEM); err != nil {
 			return errors.Wrapf(err, "encrypt initrd private key for %s", machine)
-		}
-		if err := os.WriteFile(privPath, encrypted, 0o600); err != nil {
-			return errors.Wrapf(err, "write encrypted initrd private key")
 		}
 		if err := os.WriteFile(pubPath, pubLine, 0o644); err != nil {
 			return errors.Wrapf(err, "write initrd public key")
