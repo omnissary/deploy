@@ -175,3 +175,30 @@ func TestRemoveAdminKeyRejectsLastRecipient(t *testing.T) {
 		t.Fatal("expected RemoveAdminKey to reject removing the last admin PGP recipient")
 	}
 }
+
+func TestInitConfCreatesFileAndRefusesToOverwrite(t *testing.T) {
+	t.Parallel()
+
+	confPath := filepath.Join(t.TempDir(), ".sops.yaml")
+	if err := InitConf(confPath, []string{testAdminPGP}); err != nil {
+		t.Fatalf("InitConf: %v", err)
+	}
+	if err := RequireAdminPGPConfig(confPath); err != nil {
+		t.Fatalf("created config is invalid: %v", err)
+	}
+	before, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := InitConf(confPath, []string{"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"}); err == nil {
+		t.Fatal("expected InitConf to refuse an existing file")
+	}
+	after, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("existing .sops.yaml was modified")
+	}
+}

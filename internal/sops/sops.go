@@ -19,6 +19,8 @@ import (
 
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
+
+	"git.tatikoma.dev/corpix/deploy/internal/atomicfile"
 )
 
 // ErrKeyNotFound is returned when a requested top-level key is absent from a
@@ -95,7 +97,7 @@ func Create(confPath, path string, plaintext []byte) error {
 	if err != nil {
 		return errors.Wrapf(err, "sops emit %s", path)
 	}
-	return writeNew(path, out, 0o600)
+	return atomicfile.Create(path, out, 0o600)
 }
 
 // ListYAMLKeys reads an encrypted SOPS YAML file and returns its plaintext
@@ -137,7 +139,7 @@ func encryptAndWrite(store common.Store, tree *gosops.Tree, dataKey []byte, file
 	if err != nil {
 		return errors.Wrapf(err, "sops emit %s", filePath)
 	}
-	return writeAtomic(filePath, out, 0o600)
+	return atomicfile.Write(filePath, out, 0o600)
 }
 
 // ReadFile decrypts path, verifying its MAC, and returns the plaintext.
@@ -193,44 +195,4 @@ func Repair(confPath, path string, accept func(*File) (bool, error)) (bool, erro
 		return false, err
 	}
 	return true, Verify(path)
-}
-
-// writeNew atomically creates path with data, failing if path exists.
-func writeNew(path string, data []byte, mode os.FileMode) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
-	if err != nil {
-		return errors.Wrapf(err, "create tmp for %s", path)
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return errors.Wrapf(err, "write tmp for %s", path)
-	}
-	if err := tmp.Chmod(mode); err != nil {
-		_ = tmp.Close()
-		return errors.Wrapf(err, "chmod tmp for %s", path)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return errors.Wrapf(err, "sync tmp for %s", path)
-	}
-	if err := tmp.Close(); err != nil {
-		return errors.Wrapf(err, "close tmp for %s", path)
-	}
-	if err := os.Link(tmp.Name(), path); err != nil {
-		return errors.Wrapf(err, "create %s", path)
-	}
-	return nil
-}
-
-func writeAtomic(path string, data []byte, mode os.FileMode) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, mode); err != nil {
-		return errors.Wrapf(err, "write tmp %s", tmp)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return errors.Wrapf(err, "rename %s -> %s", tmp, path)
-	}
-	return nil
 }

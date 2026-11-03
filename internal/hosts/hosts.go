@@ -26,6 +26,8 @@ import (
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
 	"gopkg.in/yaml.v3"
+
+	"git.tatikoma.dev/corpix/deploy/internal/atomicfile"
 )
 
 // AddressEntry holds either a plain address (Default) or per-operation tagged
@@ -128,15 +130,7 @@ func Save(path string, f *File) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return errors.Wrapf(err, "create hosts dir")
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return errors.Wrapf(err, "write hosts tmp file")
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return errors.Wrapf(err, "rename hosts tmp file")
-	}
-	return nil
+	return atomicfile.Write(path, data, 0o644)
 }
 
 // GetAddress returns the address for a machine and operation tag. If tag is

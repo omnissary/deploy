@@ -9,6 +9,7 @@ import (
 
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
+	"git.tatikoma.dev/corpix/deploy/internal/atomicfile"
 	"git.tatikoma.dev/corpix/deploy/internal/sshkey"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
 	"gopkg.in/yaml.v3"
@@ -60,7 +61,13 @@ func InitConf(confPath string, adminPGP []string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(confPath, out, 0o644)
+	if err := atomicfile.Create(confPath, out, 0o644); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return errors.Errorf("%s already exists", confPath)
+		}
+		return err
+	}
+	return nil
 }
 
 // UpsertMachineRules ensures machine-specific creation rules exist in confPath.
@@ -696,15 +703,7 @@ func writeSopsYAML(confPath string, cfg sopsYAML) error {
 	if err != nil {
 		return err
 	}
-	tmp := confPath + ".tmp"
-	if err := os.WriteFile(tmp, out, 0o644); err != nil {
-		return errors.Wrapf(err, "write tmp %s", tmp)
-	}
-	if err := os.Rename(tmp, confPath); err != nil {
-		_ = os.Remove(tmp)
-		return errors.Wrapf(err, "rename %s", confPath)
-	}
-	return nil
+	return atomicfile.Write(confPath, out, 0o644)
 }
 
 func marshalSopsYAML(cfg sopsYAML) ([]byte, error) {

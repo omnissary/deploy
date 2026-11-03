@@ -29,6 +29,7 @@ internal/
   vars/                  pure path/regex builders for the vars/ layout (no I/O)
   nix/                   subprocess wrappers for nix build, nix eval, nixos-rebuild, nixos-anywhere
   state/                 per-flake schema version (vars/.deploy.state) for migrate steps
+  atomicfile/            atomic Write (replace) and Create (no-clobber) for all persistent files
   agekey/                age keypair generation
   sshkey/                SSH key operations and ssh-to-age conversion
 ```
@@ -91,7 +92,7 @@ Legacy flat format (`machine: addr` at top level) is still read and rewritten on
 
 ## Atomic writes
 
-Every function in `internal/sops` and `internal/hosts` that modifies a file writes to `<path>.tmp` then renames atomically. Follow this pattern for any new file-writing helpers.
+All persistent writes go through `internal/atomicfile`: `Write` replaces a file via a unique temp file, fsync and rename; `Create` does the same but fails with `os.ErrExist` instead of overwriting. Never use `os.WriteFile` for files under the flake.
 
 ## multi-machine deploy
 
