@@ -31,8 +31,9 @@ func NewIdentity(t testing.TB) Identity {
 	return pair
 }
 
-// UseIdentities makes exactly the given identities available for decryption
-// for the rest of the test, hiding any key the developer has configured.
+// UseIdentities makes exactly the given age identities available for
+// decryption for the rest of the test, hiding any age key the developer has
+// configured and any PGP keyring, since SOPS falls back to PGP when age fails.
 // Tests calling it must not run in parallel.
 func UseIdentities(t testing.TB, ids ...Identity) {
 	t.Helper()
@@ -42,6 +43,12 @@ func UseIdentities(t testing.TB, ids ...Identity) {
 	}
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
+	gnupg, err := os.MkdirTemp("", "gpg")
+	if err != nil {
+		t.Fatalf("create empty GNUPGHOME: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(gnupg) })
+	t.Setenv("GNUPGHOME", gnupg)
 	if len(ids) == 0 {
 		return
 	}

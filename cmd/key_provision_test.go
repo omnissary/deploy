@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -29,20 +31,21 @@ func machineAge(t *testing.T, cfg *Config, machine string) string {
 	return age
 }
 
-// useMachineIdentity switches decryption to the machine's own SSH host key,
-// which is what sops-nix uses on the deployed machine.
+// useMachineIdentity switches decryption to the machine's SSH host key
+// converted with ssh-to-age, which is what sops-nix does on the machine.
 func useMachineIdentity(t *testing.T, cfg *Config, machine string) {
 	t.Helper()
 	priv, err := sops.ReadFile(vars.MachineHostKeyPath(cfg.FlakeDir, machine))
 	if err != nil {
 		t.Fatal(err)
 	}
-	keyFile := t.TempDir() + "/ssh_host_ed25519_key"
-	if err := os.WriteFile(keyFile, priv, 0o600); err != nil {
-		t.Fatal(err)
+	cmd := exec.Command("ssh-to-age", "-private-key")
+	cmd.Stdin = bytes.NewReader(priv)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("ssh-to-age -private-key: %v", err)
 	}
-	sopstest.UseIdentities(t)
-	t.Setenv("SOPS_AGE_SSH_PRIVATE_KEY_FILE", keyFile)
+	sopstest.UseIdentities(t, sopstest.Identity{Private: strings.TrimSpace(string(out)), Public: machineAge(t, cfg, machine)})
 }
 
 func TestEnsureHostKeyGeneratesConsistentPair(t *testing.T) {
