@@ -3,7 +3,6 @@
 package sops
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -44,34 +43,6 @@ func decryptionOrder() []string {
 		}
 	}
 	return append([]string{}, gosops.DefaultDecryptionOrder...)
-}
-
-// DecryptBinary decrypts a sops binary-format file and returns plaintext bytes.
-func DecryptBinary(filePath string) ([]byte, error) {
-	log.Debug().Str("file", filePath).Msg("sops decrypt binary")
-	storesCfg := config.NewStoresConfig()
-	store := common.StoreForFormat(formats.Binary, storesCfg)
-
-	tree, err := common.LoadEncryptedFile(store, filePath)
-	if err != nil {
-		return nil, errors.Wrapf(err, "sops load encrypted %s", filePath)
-	}
-
-	_, err = common.DecryptTree(common.DecryptTreeOpts{
-		Tree:            tree,
-		KeyServices:     keyServices(),
-		DecryptionOrder: decryptionOrder(),
-		Cipher:          newCipher(),
-	})
-	if err != nil {
-		return nil, errors.Wrapf(err, "sops decrypt binary %s", filePath)
-	}
-
-	plain, err := store.EmitPlainFile(tree.Branches)
-	if err != nil {
-		return nil, errors.Wrap(err, "sops emit plain binary")
-	}
-	return plain, nil
 }
 
 // Create encrypts plaintext with the recipients of the .sops.yaml creation
@@ -127,43 +98,6 @@ func Create(confPath, path string, plaintext []byte) error {
 	return writeNew(path, out, 0o600)
 }
 
-// DecryptYAMLExtract decrypts a YAML secrets file and returns the string value at key.
-func DecryptYAMLExtract(filePath, key string) (string, error) {
-	log.Debug().Str("file", filePath).Str("key", key).Msg("sops decrypt yaml extract")
-	storesCfg := config.NewStoresConfig()
-	store := common.StoreForFormat(formats.Yaml, storesCfg)
-
-	tree, err := common.LoadEncryptedFile(store, filePath)
-	if err != nil {
-		return "", errors.Wrapf(err, "sops load encrypted %s", filePath)
-	}
-
-	_, err = common.DecryptTree(common.DecryptTreeOpts{
-		Tree:            tree,
-		KeyServices:     keyServices(),
-		DecryptionOrder: decryptionOrder(),
-		Cipher:          newCipher(),
-	})
-	if err != nil {
-		return "", errors.Wrapf(err, "sops decrypt yaml %s", filePath)
-	}
-
-	plain, err := store.EmitPlainFile(tree.Branches)
-	if err != nil {
-		return "", errors.Wrap(err, "sops emit plain yaml")
-	}
-
-	var m map[string]interface{}
-	if err := yaml.Unmarshal(plain, &m); err != nil {
-		return "", errors.Wrap(err, "parse decrypted yaml")
-	}
-	v, ok := m[key]
-	if !ok {
-		return "", errors.Errorf("%w: %q in %s", ErrKeyNotFound, key, filePath)
-	}
-	return fmt.Sprintf("%v", v), nil
-}
-
 // ListYAMLKeys reads an encrypted SOPS YAML file and returns its plaintext
 // top-level keys in sorted order without decrypting values.
 func ListYAMLKeys(filePath string) ([]string, error) {
@@ -190,178 +124,6 @@ func ListYAMLKeys(filePath string) ([]string, error) {
 	return keys, nil
 }
 
-// VerifyFile checks that a SOPS-encrypted file can be decrypted and that its
-// integrity metadata is valid.
-func VerifyFile(filePath string) error {
-	log.Debug().Str("file", filePath).Msg("sops verify file")
-
-	storesCfg := config.NewStoresConfig()
-	format := formats.FormatForPath(filePath)
-	store := common.StoreForFormat(format, storesCfg)
-
-	tree, err := common.LoadEncryptedFile(store, filePath)
-	if err != nil {
-		return errors.Wrapf(err, "sops load encrypted %s", filePath)
-	}
-
-	if _, err := common.DecryptTree(common.DecryptTreeOpts{
-		Tree:            tree,
-		KeyServices:     keyServices(),
-		DecryptionOrder: decryptionOrder(),
-		Cipher:          newCipher(),
-	}); err != nil {
-		return errors.Wrapf(err, "sops verify %s", filePath)
-	}
-
-	return nil
-}
-
-// RepairFile decrypts a SOPS-encrypted file while ignoring a stale MAC,
-// reapplies the current creation rule from .sops.yaml, and writes back a fresh
-// encrypted file atomically.
-func RepairFile(confPath, filePath string) error {
-	log.Debug().Str("file", filePath).Msg("sops repair file")
-
-	cfg, err := config.LoadCreationRuleForFile(confPath, filePath, nil)
-	if err != nil {
-		return errors.Wrapf(err, "load sops creation rule for %s", filePath)
-	}
-
-	storesCfg := config.NewStoresConfig()
-	format := formats.FormatForPath(filePath)
-	store := common.StoreForFormat(format, storesCfg)
-
-	tree, err := common.LoadEncryptedFile(store, filePath)
-	if err != nil {
-		return errors.Wrapf(err, "sops load encrypted %s", filePath)
-	}
-
-	dataKey, err := common.DecryptTree(common.DecryptTreeOpts{
-		Tree:            tree,
-		KeyServices:     keyServices(),
-		DecryptionOrder: decryptionOrder(),
-		IgnoreMac:       true,
-		Cipher:          newCipher(),
-	})
-	if err != nil {
-		return errors.Wrapf(err, "sops decrypt tree ignoring mac %s", filePath)
-	}
-
-	tree.Metadata.KeyGroups = cfg.KeyGroups
-	tree.Metadata.ShamirThreshold = cfg.ShamirThreshold
-
-	errs := tree.Metadata.UpdateMasterKeysWithKeyServices(dataKey, keyServices())
-	if len(errs) > 0 {
-		return errors.Wrapf(errs[0], "sops update master keys for %s", filePath)
-	}
-
-	if err := common.EncryptTree(common.EncryptTreeOpts{
-		DataKey: dataKey,
-		Tree:    tree,
-		Cipher:  newCipher(),
-	}); err != nil {
-		return errors.Wrapf(err, "sops re-encrypt tree %s", filePath)
-	}
-
-	out, err := store.EmitEncryptedFile(*tree)
-	if err != nil {
-		return errors.Wrapf(err, "sops emit repaired file %s", filePath)
-	}
-
-	return writeAtomic(filePath, out, 0o600)
-}
-
-// DeleteYAML decrypts the file, removes the top-level key, and re-encrypts in-place.
-// Returns an error wrapping ErrKeyNotFound if the key does not exist.
-func DeleteYAML(filePath, key string) error {
-	log.Debug().Str("file", filePath).Str("key", key).Msg("sops delete yaml key")
-
-	store, tree, dataKey, err := loadDecrypted(filePath, formats.Yaml)
-	if err != nil {
-		return err
-	}
-
-	branch := tree.Branches[0]
-	filtered := branch[:0:0]
-	found := false
-	for _, item := range branch {
-		if item.Key == key {
-			found = true
-			continue
-		}
-		filtered = append(filtered, item)
-	}
-	if !found {
-		return errors.Errorf("%w: %q in %s", ErrKeyNotFound, key, filePath)
-	}
-	tree.Branches[0] = filtered
-
-	return encryptAndWrite(store, tree, dataKey, filePath)
-}
-
-// SetYAML decrypts the file, sets key=value, and re-encrypts in-place.
-func SetYAML(filePath, key, value string) error {
-	log.Debug().Str("file", filePath).Str("key", key).Msg("sops set yaml key")
-
-	store, tree, dataKey, err := loadDecrypted(filePath, formats.Yaml)
-	if err != nil {
-		return err
-	}
-
-	tree.Branches[0], _ = tree.Branches[0].Set([]interface{}{key}, value)
-
-	return encryptAndWrite(store, tree, dataKey, filePath)
-}
-
-// EnsureYAML sets key to the value returned by generate only if the key is
-// absent. The file is decrypted exactly once, so a failed decryption can never
-// be mistaken for a missing key. Returns true if the key was created.
-func EnsureYAML(filePath, key string, generate func() (string, error)) (bool, error) {
-	log.Debug().Str("file", filePath).Str("key", key).Msg("sops ensure yaml key")
-
-	store, tree, dataKey, err := loadDecrypted(filePath, formats.Yaml)
-	if err != nil {
-		return false, err
-	}
-
-	for _, item := range tree.Branches[0] {
-		if item.Key == key {
-			return false, nil
-		}
-	}
-
-	value, err := generate()
-	if err != nil {
-		return false, errors.Wrapf(err, "generate value for %s", key)
-	}
-	tree.Branches[0], _ = tree.Branches[0].Set([]interface{}{key}, value)
-
-	if err := encryptAndWrite(store, tree, dataKey, filePath); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func loadDecrypted(filePath string, format formats.Format) (common.Store, *gosops.Tree, []byte, error) {
-	store := common.StoreForFormat(format, config.NewStoresConfig())
-
-	tree, err := common.LoadEncryptedFile(store, filePath)
-	if err != nil {
-		return nil, nil, nil, errors.Wrapf(err, "sops load encrypted %s", filePath)
-	}
-
-	dataKey, err := common.DecryptTree(common.DecryptTreeOpts{
-		Tree:            tree,
-		KeyServices:     keyServices(),
-		DecryptionOrder: decryptionOrder(),
-		Cipher:          newCipher(),
-	})
-	if err != nil {
-		return nil, nil, nil, errors.Wrapf(err, "sops decrypt tree %s", filePath)
-	}
-	return store, tree, dataKey, nil
-}
-
 func encryptAndWrite(store common.Store, tree *gosops.Tree, dataKey []byte, filePath string) error {
 	if err := common.EncryptTree(common.EncryptTreeOpts{
 		DataKey: dataKey,
@@ -378,56 +140,40 @@ func encryptAndWrite(store common.Store, tree *gosops.Tree, dataKey []byte, file
 	return writeAtomic(filePath, out, 0o600)
 }
 
-// UpdateKeys re-encrypts the data key with the current key list from .sops.yaml.
-func UpdateKeys(confPath, filePath string) error {
-	log.Debug().Str("file", filePath).Msg("sops update keys")
-
-	cfg, err := config.LoadCreationRuleForFile(confPath, filePath, nil)
+// ReadFile decrypts path, verifying its MAC, and returns the plaintext.
+func ReadFile(path string) ([]byte, error) {
+	f, err := Open(path)
 	if err != nil {
-		return errors.Wrapf(err, "load sops creation rule for %s", filePath)
+		return nil, err
 	}
+	return f.Bytes()
+}
 
-	storesCfg := config.NewStoresConfig()
-	format := formats.FormatForPath(filePath)
-	store := common.StoreForFormat(format, storesCfg)
+// Verify checks that path decrypts and that its MAC is valid.
+func Verify(path string) error {
+	_, err := Open(path)
+	return err
+}
 
-	tree, err := common.LoadEncryptedFile(store, filePath)
-	if err != nil {
-		return errors.Wrapf(err, "sops load encrypted %s", filePath)
-	}
-
-	dataKey, err := common.DecryptTree(common.DecryptTreeOpts{
-		Tree:            tree,
-		KeyServices:     keyServices(),
-		DecryptionOrder: decryptionOrder(),
-		Cipher:          newCipher(),
+// UpdateKeys re-encrypts the data key of path for the recipients of the
+// matching .sops.yaml creation rule. Values are unchanged.
+func UpdateKeys(confPath, path string) error {
+	return Edit(path, func(f *File) error {
+		return f.Rekey(confPath)
 	})
+}
+
+// Repair decrypts path ignoring its MAC, applies the current recipients and
+// rewrites it with a fresh MAC. This accepts whatever content is in the file.
+func Repair(confPath, path string) error {
+	f, err := OpenUnverified(path)
 	if err != nil {
-		return errors.Wrapf(err, "sops decrypt tree %s", filePath)
+		return err
 	}
-
-	tree.Metadata.KeyGroups = cfg.KeyGroups
-	tree.Metadata.ShamirThreshold = cfg.ShamirThreshold
-
-	errs := tree.Metadata.UpdateMasterKeysWithKeyServices(dataKey, keyServices())
-	if len(errs) > 0 {
-		return errors.Wrapf(errs[0], "sops update master keys for %s", filePath)
+	if err := f.Rekey(confPath); err != nil {
+		return err
 	}
-
-	if err := common.EncryptTree(common.EncryptTreeOpts{
-		DataKey: dataKey,
-		Tree:    tree,
-		Cipher:  newCipher(),
-	}); err != nil {
-		return errors.Wrapf(err, "sops re-encrypt tree %s", filePath)
-	}
-
-	out, err := store.EmitEncryptedFile(*tree)
-	if err != nil {
-		return errors.Wrap(err, "sops emit after updatekeys")
-	}
-
-	return writeAtomic(filePath, out, 0o600)
+	return f.Save()
 }
 
 // writeNew atomically creates path with data, failing if path exists.

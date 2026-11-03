@@ -314,7 +314,7 @@ func unlockSessionKey(cfg *Config, name string) error {
 
 	privPath := filepath.Join(cfg.FlakeDir, "vars", "admin", name+"-age-key")
 
-	priv, err := sops.DecryptBinary(privPath)
+	priv, err := sops.ReadFile(privPath)
 	if err != nil {
 		return errors.Wrapf(err, "decrypt session age key %s", name)
 	}
@@ -513,7 +513,7 @@ func ensureInitrdKey(cfg *Config, machine string) error {
 	// keys are consumed later during init/deploy; verifying on every build/eval
 	// causes an unnecessary secret decryption and YubiKey touch.
 	if generated {
-		privPEM, err := sops.DecryptBinary(privPath)
+		privPEM, err := sops.ReadFile(privPath)
 		if err != nil {
 			return errors.Wrapf(err, "decrypt initrd private key for %s", machine)
 		}

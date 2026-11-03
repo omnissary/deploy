@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 
 	"git.tatikoma.dev/corpix/deploy/internal/agekey"
@@ -77,59 +78,118 @@ cat %[2]q
 	}
 }
 
+func seedSecrets(t *testing.T, path string, values map[string]string) {
+	t.Helper()
+	if err := sops.Edit(path, func(f *sops.File) error {
+		for k, v := range values {
+			f.Set(k, v)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+}
+
+func readSecret(t *testing.T, path, key string) string {
+	t.Helper()
+	v, err := getSecret(path, key)
+	if err != nil {
+		t.Fatalf("read %s: %v", key, err)
+	}
+	return v
+}
+
 // A ZFS root key already exists. During a later `machine deploy` the first
-// decryption attempt fails transiently. ensureZFSPoolKey must not treat that as
-// "key missing" and replace the existing key with a freshly generated one.
-func TestEnsureZFSPoolKeyKeepsExistingKeyOnTransientDecryptFailure(t *testing.T) {
-	const machine, pool = "m", "tank"
+// decryption attempt fails transiently. The existing key must never be
+// replaced with a freshly generated one.
+func TestEnsureZFSPoolKeysKeepsExistingKeyOnTransientDecryptFailure(t *testing.T) {
+	const machine = "m"
 	cfg, armFailures := setupFlakyAgeFlake(t, machine)
 	path := vars.MachineSecretsPath(cfg.FlakeDir, machine)
 
 	const original = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
-	if err := sops.SetYAML(path, pool+"-root-key", original); err != nil {
-		t.Fatalf("seed root key: %v", err)
-	}
-	if err := sops.SetYAML(path, "other", "unrelated"); err != nil {
-		t.Fatalf("add second secret: %v", err)
-	}
+	seedSecrets(t, path, map[string]string{"tank-root-key": original})
+	seedSecrets(t, path, map[string]string{"other": "unrelated"})
 
 	armFailures(1)
-	_ = ensureZFSPoolKey(cfg, machine, pool)
+	_ = ensureZFSPoolKeys(path, machine, []string{"tank"})
 
-	got, err := sops.DecryptYAMLExtract(path, pool+"-root-key")
-	if err != nil {
-		t.Fatalf("read back root key: %v", err)
-	}
-	if got != original {
+	if got := readSecret(t, path, "tank-root-key"); got != original {
 		t.Fatalf("existing ZFS root key was replaced:\n got  %s\n want %s", got, original)
 	}
 }
 
-// Same as above but with the decryption failing persistently: nothing should
-// be written, and the caller must get an error rather than a silent no-op.
-func TestEnsureZFSPoolKeyReportsPersistentDecryptFailure(t *testing.T) {
-	const machine, pool = "m", "tank"
+func TestEnsureZFSPoolKeysReportsDecryptFailureWithoutWriting(t *testing.T) {
+	const machine = "m"
 	cfg, armFailures := setupFlakyAgeFlake(t, machine)
 	path := vars.MachineSecretsPath(cfg.FlakeDir, machine)
-
-	if err := sops.SetYAML(path, pool+"-root-key", "original"); err != nil {
-		t.Fatalf("seed root key: %v", err)
-	}
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	seedSecrets(t, path, map[string]string{"tank-root-key": "original"})
+	before := fileBytes(t, path)
 
 	armFailures(1000)
-	if err := ensureZFSPoolKey(cfg, machine, pool); err == nil {
+	if err := ensureZFSPoolKeys(path, machine, []string{"tank", "new"}); err == nil {
 		t.Fatal("expected an error when the secrets file cannot be decrypted")
 	}
+	if fileBytes(t, path) != before {
+		t.Fatal("secrets file was modified despite decryption failure")
+	}
+}
 
-	after, err := os.ReadFile(path)
-	if err != nil {
+func TestEnsureZFSPoolKeysCreatesOnlyMissingKeys(t *testing.T) {
+	const machine = "m"
+	cfg, _ := setupFlakyAgeFlake(t, machine)
+	path := vars.MachineSecretsPath(cfg.FlakeDir, machine)
+	seedSecrets(t, path, map[string]string{"tank-root-key": "original", "other": "x"})
+
+	if err := ensureZFSPoolKeys(path, machine, []string{"tank", "data", "backup"}); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+
+	if got := readSecret(t, path, "tank-root-key"); got != "original" {
+		t.Fatalf("existing key replaced: %q", got)
+	}
+	if got := readSecret(t, path, "other"); got != "x" {
+		t.Fatalf("unrelated key changed: %q", got)
+	}
+	data := readSecret(t, path, "data-root-key")
+	backup := readSecret(t, path, "backup-root-key")
+	hexKey := regexp.MustCompile(`^[0-9a-f]{64}$`)
+	if !hexKey.MatchString(data) || !hexKey.MatchString(backup) {
+		t.Fatalf("generated keys are not 32-byte hex: %q %q", data, backup)
+	}
+	if data == backup {
+		t.Fatal("pools received the same key")
+	}
+}
+
+func TestEnsureZFSPoolKeysIsIdempotent(t *testing.T) {
+	const machine = "m"
+	cfg, _ := setupFlakyAgeFlake(t, machine)
+	path := vars.MachineSecretsPath(cfg.FlakeDir, machine)
+
+	if err := ensureZFSPoolKeys(path, machine, []string{"tank"}); err != nil {
 		t.Fatal(err)
 	}
-	if string(before) != string(after) {
-		t.Fatal("secrets file was modified despite decryption failure")
+	before := fileBytes(t, path)
+	if err := ensureZFSPoolKeys(path, machine, []string{"tank"}); err != nil {
+		t.Fatal(err)
+	}
+	if fileBytes(t, path) != before {
+		t.Fatal("second run rewrote the secrets file")
+	}
+}
+
+func TestEnsureZFSPoolKeysWithoutPoolsDoesNotDecrypt(t *testing.T) {
+	const machine = "m"
+	cfg, armFailures := setupFlakyAgeFlake(t, machine)
+	path := vars.MachineSecretsPath(cfg.FlakeDir, machine)
+	before := fileBytes(t, path)
+
+	armFailures(1000)
+	if err := ensureZFSPoolKeys(path, machine, nil); err != nil {
+		t.Fatalf("expected no decryption without pools, got %v", err)
+	}
+	if fileBytes(t, path) != before {
+		t.Fatal("file modified")
 	}
 }

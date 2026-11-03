@@ -498,15 +498,15 @@ func ensureSecrets(cfg *Config, machine string) error {
 
 func verifySecretFile(cfg *Config, path string, fix bool) error {
 	log.Info().Str("file", path).Msg("verifying secret")
-	if err := sops.VerifyFile(path); err != nil {
+	if err := sops.Verify(path); err != nil {
 		if !fix {
 			return err
 		}
 		log.Warn().Str("file", path).Msg("secret verification failed, attempting repair")
-		if repairErr := sops.RepairFile(cfg.SopsConf, path); repairErr != nil {
+		if repairErr := sops.Repair(cfg.SopsConf, path); repairErr != nil {
 			return errors.Wrapf(repairErr, "repair secret %s", path)
 		}
-		if verifyErr := sops.VerifyFile(path); verifyErr != nil {
+		if verifyErr := sops.Verify(path); verifyErr != nil {
 			return errors.Wrapf(verifyErr, "verify repaired secret %s", path)
 		}
 		log.Info().Str("file", path).Msg("secret repaired")
@@ -530,7 +530,7 @@ func verifyAllSecrets(cfg *Config, fix bool) error {
 			Int("total", len(paths)).
 			Str("file", path).
 			Msg("verifying secret")
-		if err := sops.VerifyFile(path); err != nil {
+		if err := sops.Verify(path); err != nil {
 			if !fix {
 				return err
 			}
@@ -539,10 +539,10 @@ func verifyAllSecrets(cfg *Config, fix bool) error {
 				Int("total", len(paths)).
 				Str("file", path).
 				Msg("secret verification failed, attempting repair")
-			if repairErr := sops.RepairFile(cfg.SopsConf, path); repairErr != nil {
+			if repairErr := sops.Repair(cfg.SopsConf, path); repairErr != nil {
 				return errors.Wrapf(repairErr, "repair secret %s", path)
 			}
-			if verifyErr := sops.VerifyFile(path); verifyErr != nil {
+			if verifyErr := sops.Verify(path); verifyErr != nil {
 				return errors.Wrapf(verifyErr, "verify repaired secret %s", path)
 			}
 			log.Info().
