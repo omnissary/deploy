@@ -440,6 +440,7 @@ func New() *cli.App {
 			secretCmd(),
 			groupCmd(),
 			migrateCmd(),
+			syncCmd(),
 			machineCmd(),
 			kexecCmd(),
 			{
