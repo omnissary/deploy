@@ -17,7 +17,7 @@ func TestMetadataExpression(t *testing.T) {
 		t.Skip("nix unavailable")
 	}
 	expr := "let f = import " + file + `; in f { nixosConfigurations = {
- chip.config = { system.build.nandFlash = "unused"; hardware.allwinner.chip.storage="nand"; boot.initrd.network.ssh.enable=false; nixpkgs.hostPlatform.system="armv7l-linux"; };
+ chip.config = { system.build = { nandFlash = "unused"; diskoScript = "unused"; }; hardware.allwinner.chip.storage="nand"; boot.initrd.network.ssh.enable=false; nixpkgs.hostPlatform.system="armv7l-linux"; };
  zfs.config = { system.build.diskoScript="unused"; modules.initrd-networking.enable=true; boot.initrd.network.ssh.enable=true; boot.loader.supportsInitrdSecrets=true; modules.zfs-crypt={enable=true;pools.rpool={keyPath="/run/zfs-keys/rpool.key";};}; };
  luks.config = { system.build={}; modules.cryptsetup.askPassword=true; };
  }; }`
@@ -29,7 +29,7 @@ func TestMetadataExpression(t *testing.T) {
 	if err := json.Unmarshal(out, &m); err != nil {
 		t.Fatal(err)
 	}
-	if m.Machines["chip"].InitrdSSH || m.Machines["chip"].Installer.Backend != "executable" {
+	if m.Machines["chip"].Disko || m.Machines["chip"].InitrdSSH || m.Machines["chip"].Installer.Backend != "executable" {
 		t.Fatal(m)
 	}
 	if !m.Machines["zfs"].InitrdSSH {
@@ -37,5 +37,37 @@ func TestMetadataExpression(t *testing.T) {
 	}
 	if m.Machines["luks"].Unlock != "luks" {
 		t.Fatal(m)
+	}
+}
+
+func TestLoadMetadataWithoutDefaultPackage(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	if _, err := exec.LookPath("nix"); err != nil {
+		t.Skip("nix unavailable")
+	}
+	root := t.TempDir()
+	writeFlake(t, root, `{ outputs = _: { nixosConfigurations.chip.config = { system.build.nandFlash = "unused"; hardware.allwinner.chip.storage = "nand"; nixpkgs.hostPlatform.system = "armv7l-linux"; }; }; }`)
+	m, err := loadManifest(&Config{FlakeDir: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Machines["chip"].System != "armv7l-linux" || m.Machines["chip"].Installer.Backend != "executable" {
+		t.Fatal(m)
+	}
+}
+
+func TestSelectedMachineDoesNotEvaluateUnrelatedBrokenConfiguration(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	if _, err := exec.LookPath("nix"); err != nil {
+		t.Skip("nix unavailable")
+	}
+	root := t.TempDir()
+	writeFlake(t, root, `{ outputs = _: { nixosConfigurations = {
+ broken = throw "unrelated machine must not evaluate";
+ chip = { config = { system.build.nandFlash = "unused"; hardware.allwinner.chip.storage = "nand"; nixpkgs.hostPlatform = throw "unset option"; }; pkgs.stdenv.hostPlatform.system = "armv7l-linux"; };
+ }; }; }`)
+	m, err := machineMetadata(&Config{FlakeDir: root}, "chip")
+	if err != nil || m.System != "armv7l-linux" {
+		t.Fatal(m, err)
 	}
 }

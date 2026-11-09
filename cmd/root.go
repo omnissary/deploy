@@ -24,6 +24,8 @@ import (
 // Config holds values derived from global flags and is threaded through commands
 // via cli.Context metadata.
 type Config struct {
+	machineCache map[string]manifest.Machine
+	policyCache  *manifest.Manifest
 	manifestInfo func() (manifest.Manifest, error)
 	machineInfo  func(string) (manifest.Machine, error)
 	// FlakeDir is the absolute path to the flake root.

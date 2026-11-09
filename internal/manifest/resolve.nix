@@ -1,6 +1,6 @@
 flake:
  let
-  inherit (builtins) foldl' isAttrs hasAttr listToAttrs filter attrValues mapAttrs substring stringLength;
+  inherit (builtins) foldl' isAttrs hasAttr listToAttrs filter attrValues mapAttrs substring stringLength tryEval;
   machine = name: system:
    let c = system.config;
        attr = path: fallback: foldl' (v: key: if isAttrs v && hasAttr key v then v.${key} else fallback) c path;
@@ -15,17 +15,19 @@ flake:
          then { name=n; value={keyPath=substring 7 (stringLength p.rootFsOptions.keylocation - 7) p.rootFsOptions.keylocation; format=p.rootFsOptions.keyformat;}; } else null
        ) diskoPools)));
        pools = diskKeys // mapAttrs (n: p: { inherit (p) keyPath; datasets=p.datasets or []; format="hex"; }) zfsPools;
+       configuredDisko = attr [ "disko" "devices" "disk" ] {} != {} || attr [ "disko" "devices" "nodev" ] {} != {} || diskoPools != {};
        nand = attr [ "hardware" "allwinner" "chip" "storage" ] "" == "nand";
    in {
      rootFS = attr [ "fileSystems" "/" "fsType" ] "";
-     system = attr [ "nixpkgs" "hostPlatform" "system" ] "";
+     system = let detected = tryEval (attr [ "nixpkgs" "hostPlatform" "system" ] "");
+       in if detected.success && detected.value != "" then detected.value else system.pkgs.stdenv.hostPlatform.system or "";
      hostKey = true;
      initrdSSH = initrd && supportsSecrets && managed;
      initrdPort = attr [ "boot" "initrd" "network" "ssh" "port" ] 2222;
-     disko = (c.system.build ? diskoScript);
+     disko = configuredDisko && (c.system.build ? diskoScript);
      inherit pools;
      unlock = if pools != {} then "zfs" else if attr [ "modules" "cryptsetup" "askPassword" ] false then "luks" else "";
-     installer = if nand && c.system.build ? nandFlash then {backend="executable";attribute="config.system.build.nandFlash";} else if c.system.build ? diskoScript then {backend="nixos-anywhere";} else {backend="unsupported";};
+     installer = if nand && c.system.build ? nandFlash then {backend="executable";attribute="config.system.build.nandFlash";} else if configuredDisko && c.system.build ? diskoScript then {backend="nixos-anywhere";} else {backend="unsupported";};
      source = "nixosConfigurations";
    };
   defaults = mapAttrs machine (flake.nixosConfigurations or {});

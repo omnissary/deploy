@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"git.tatikoma.dev/corpix/atlas/errors"
@@ -206,4 +208,25 @@ func WhyDepends(path, dep string) error {
 		return errors.Wrapf(err, "why-depends %s %s: %s", path, dep, stderr.String())
 	}
 	return nil
+}
+
+// EvalFlake applies a public projection to the entire flake output set. An empty
+// installable attribute selects defaultPackage in nix eval, not the output set.
+func EvalFlake(flake, apply string) (json.RawMessage, error) {
+	root, err := filepath.Abs(flake)
+	if err != nil {
+		return nil, err
+	}
+	ref := root
+	if _, err := os.Stat(filepath.Join(root, ".git")); err == nil {
+		ref = (&url.URL{Scheme: "git+file", Path: root}).String()
+	}
+	encoded, _ := json.Marshal(ref)
+	quoted := strings.ReplaceAll(string(encoded), "${", "\\${")
+	expression := "let inherit (builtins) getFlake; in (" + apply + ") (getFlake " + quoted + ")"
+	out, err := run("eval", "--impure", "--json", "--expr", expression)
+	if err != nil {
+		return nil, errors.Wrap(err, "evaluate flake deployment metadata")
+	}
+	return json.RawMessage(bytes.TrimSpace(out)), nil
 }

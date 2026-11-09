@@ -79,7 +79,7 @@ func provisionApplicationResources(cfg *Config, machine string, meta manifest.Ma
 		}
 	}
 	if len(meta.Certificates) > 0 {
-		m, err := loadManifest(cfg)
+		m, err := loadPolicyManifest(cfg)
 		if err != nil {
 			return err
 		}
@@ -116,7 +116,7 @@ func requireApplicationResources(cfg *Config, machine string, meta manifest.Mach
 	if len(meta.Certificates) == 0 {
 		return nil
 	}
-	m, err := loadManifest(cfg)
+	m, err := loadPolicyManifest(cfg)
 	if err != nil {
 		return err
 	}
