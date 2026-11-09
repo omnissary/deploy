@@ -101,3 +101,9 @@ All persistent writes go through `internal/atomicfile`: `Write` replaces a file 
 ## multi-machine deploy
 
 `machineDeployCmd` validates and resolves all machines up front, then fans out goroutines gated by a semaphore channel of size `--parallel` (default 3). Errors are collected and joined; all machines are attempted even if some fail.
+
+## Commits
+
+Commit completed work with one commit per feature. Commit changes to these
+instructions separately. Do not add AI attribution or co-author trailers.
+Stage explicit paths and leave unrelated changes, including reactor-ca, alone.
