@@ -177,7 +177,7 @@ func machineInitCmd() *cli.Command {
 				Usage: "extra SSH option to prepend to nixos-anywhere SSH calls; can be repeated",
 			},
 		},
-		Action: func(ctx *cli.Context) error {
+		Action: repositoryMutation(func(ctx *cli.Context) error {
 			if ctx.NArg() < 1 {
 				return errors.New("usage: machine init <machine> [host]")
 			}
@@ -333,7 +333,7 @@ func machineInitCmd() *cli.Command {
 			}
 			log.Info().Str("machine", machine).Str("host", host).Msg("machine initialised")
 			return nil
-		},
+		}),
 	}
 }
 
@@ -565,7 +565,7 @@ func machineDeployCmd() *cli.Command {
 				fmt.Println(name)
 			}
 		},
-		Action: func(ctx *cli.Context) error {
+		Action: repositoryMutation(func(ctx *cli.Context) error {
 			if ctx.NArg() < 1 {
 				return errors.New("usage: machine deploy <machine|group...>")
 			}
@@ -656,7 +656,7 @@ func machineDeployCmd() *cli.Command {
 				msgs[i] = e.Error()
 			}
 			return errors.New(strings.Join(msgs, "\n"))
-		},
+		}),
 	}
 }
 
@@ -1207,7 +1207,7 @@ func machineProvisionCmd() *cli.Command {
 				fmt.Fprintln(ctx.App.Writer, name)
 			}
 		},
-		Action: func(ctx *cli.Context) error {
+		Action: repositoryMutation(func(ctx *cli.Context) error {
 			if ctx.NArg() < 1 {
 				return errors.New("usage: machine provision <machine|group...>")
 			}
@@ -1222,7 +1222,7 @@ func machineProvisionCmd() *cli.Command {
 				}
 			}
 			return nil
-		},
+		}),
 	}
 }
 

@@ -80,7 +80,7 @@ func loadPolicyManifest(cfg *Config) (manifest.Manifest, error) {
 	return m, err
 }
 func machineInspectCmd() *cli.Command {
-	return &cli.Command{Name: "inspect", Usage: "show resolved machine capabilities and supported operations", ArgsUsage: "<machine>", Flags: []cli.Flag{&cli.BoolFlag{Name: "json"}}, Action: func(ctx *cli.Context) error {
+	return &cli.Command{Before: optionsBeforeArgs, Name: "inspect", Usage: "show resolved machine capabilities and supported operations", ArgsUsage: "<machine>", Flags: []cli.Flag{&cli.BoolFlag{Name: "json"}}, Action: func(ctx *cli.Context) error {
 		if ctx.NArg() != 1 {
 			return errors.New("usage: machine inspect <machine>")
 		}

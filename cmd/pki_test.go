@@ -21,8 +21,7 @@ func TestManualAuthorityPolicyDoesNotEvaluateNix(t *testing.T) {
 }
 
 func TestLifecycleRejectsOptionsAfterResourceName(t *testing.T) {
-	command := &cli.Command{Name: "rotate", Action: func(*cli.Context) error { return nil }}
-	protectActions([]*cli.Command{command}, "pki cert")
+	command := operationCommand(commandOperation{name: "rotate", mutation: true}, nil, func(*cli.Context) error { return nil })
 	set := flag.NewFlagSet("test", flag.ContinueOnError)
 	if err := set.Parse([]string{"client", "--force"}); err != nil {
 		t.Fatal(err)

@@ -147,9 +147,19 @@ func pkiFlags() []cli.Flag {
 func pkiCmd() *cli.Command {
 	root := &cli.Command{Name: "pki", Usage: "local authority, certificate, revocation and trust lifecycle", Before: func(ctx *cli.Context) error { return requireAdminSOPSConfig(getConfig(ctx)) }}
 	ca := &cli.Command{Name: "ca", Usage: "manage named certificate authorities and signing generations"}
-	for _, verb := range []string{"create", "import", "list", "show", "renew", "rotate", "activate", "retire", "recover"} {
-		verb := verb
-		ca.Subcommands = append(ca.Subcommands, &cli.Command{Name: verb, Flags: pkiFlags(), Action: func(ctx *cli.Context) error {
+	for _, operation := range []commandOperation{
+		{name: "create", mutation: true},
+		{name: "import", mutation: true},
+		{name: "list", mutation: false},
+		{name: "show", mutation: false},
+		{name: "renew", mutation: true},
+		{name: "rotate", mutation: true},
+		{name: "activate", mutation: true},
+		{name: "retire", mutation: true},
+		{name: "recover", mutation: true},
+	} {
+		verb := operation.name
+		ca.Subcommands = append(ca.Subcommands, operationCommand(operation, pkiFlags(), func(ctx *cli.Context) error {
 			store := pkiStore(getConfig(ctx))
 			if verb == "list" {
 				states, err := store.List()
@@ -222,12 +232,23 @@ func pkiCmd() *cli.Command {
 				return err
 			}
 			return publicOutput(ctx, view)
-		}})
+		}))
 	}
 	cert := &cli.Command{Name: "cert", Usage: "manage certificate bundles; renewal preserves keys and rotation replaces them"}
-	for _, verb := range []string{"ensure", "issue", "import", "list", "show", "renew", "rotate", "revoke", "verify", "export"} {
-		verb := verb
-		cert.Subcommands = append(cert.Subcommands, &cli.Command{Name: verb, Flags: pkiFlags(), Action: func(ctx *cli.Context) error {
+	for _, operation := range []commandOperation{
+		{name: "ensure", mutation: true},
+		{name: "issue", mutation: true},
+		{name: "import", mutation: true},
+		{name: "list", mutation: false},
+		{name: "show", mutation: false},
+		{name: "renew", mutation: true},
+		{name: "rotate", mutation: true},
+		{name: "revoke", mutation: true},
+		{name: "verify", mutation: false},
+		{name: "export", mutation: true},
+	} {
+		verb := operation.name
+		cert.Subcommands = append(cert.Subcommands, operationCommand(operation, pkiFlags(), func(ctx *cli.Context) error {
 			store := pkiStore(getConfig(ctx))
 			if verb == "list" {
 				states, err := store.List()
@@ -322,12 +343,16 @@ func pkiCmd() *cli.Command {
 				return outputPEM(ctx, value, ctx.Bool("private-key"))
 			}
 			return nil
-		}})
+		}))
 	}
 	crl := &cli.Command{Name: "crl"}
-	for _, verb := range []string{"generate", "show", "verify"} {
-		verb := verb
-		crl.Subcommands = append(crl.Subcommands, &cli.Command{Name: verb, Flags: pkiFlags(), Action: func(ctx *cli.Context) error {
+	for _, operation := range []commandOperation{
+		{name: "generate", mutation: true},
+		{name: "show", mutation: false},
+		{name: "verify", mutation: false},
+	} {
+		verb := operation.name
+		crl.Subcommands = append(crl.Subcommands, operationCommand(operation, pkiFlags(), func(ctx *cli.Context) error {
 			store := pkiStore(getConfig(ctx))
 			id := ctx.Args().First()
 			if id == "" {
@@ -356,12 +381,15 @@ func pkiCmd() *cli.Command {
 				return errors.New("CRL not generated")
 			}
 			return outputPEM(ctx, value, false)
-		}})
+		}))
 	}
 	trust := &cli.Command{Name: "trust"}
-	for _, verb := range []string{"export", "status"} {
-		verb := verb
-		trust.Subcommands = append(trust.Subcommands, &cli.Command{Name: verb, Flags: pkiFlags(), Action: func(ctx *cli.Context) error {
+	for _, operation := range []commandOperation{
+		{name: "export", mutation: true},
+		{name: "status", mutation: false},
+	} {
+		verb := operation.name
+		trust.Subcommands = append(trust.Subcommands, operationCommand(operation, pkiFlags(), func(ctx *cli.Context) error {
 			ids := ctx.Args().Slice()
 			if len(ids) == 0 {
 				return errors.New("authority or declared trust-bundle names required")
@@ -386,12 +414,15 @@ func pkiCmd() *cli.Command {
 				return outputPEM(ctx, value, false)
 			}
 			return publicOutput(ctx, map[string]any{"authorities": ids, "exportReady": true, "consumerRollout": "not observed"})
-		}})
+		}))
 	}
 	csr := &cli.Command{Name: "csr"}
-	for _, verb := range []string{"create", "sign"} {
-		verb := verb
-		csr.Subcommands = append(csr.Subcommands, &cli.Command{Name: verb, Flags: pkiFlags(), Action: func(ctx *cli.Context) error {
+	for _, operation := range []commandOperation{
+		{name: "create", mutation: true},
+		{name: "sign", mutation: true},
+	} {
+		verb := operation.name
+		csr.Subcommands = append(csr.Subcommands, operationCommand(operation, pkiFlags(), func(ctx *cli.Context) error {
 			id := ctx.Args().First()
 			if id == "" {
 				return errors.New("request name required")
@@ -437,9 +468,9 @@ func pkiCmd() *cli.Command {
 				return err
 			}
 			return outputPEM(ctx, record.Certificate, false)
-		}})
+		}))
 	}
-	root.Subcommands = []*cli.Command{ca, cert, csr, crl, trust, {Name: "status", Action: func(ctx *cli.Context) error {
+	root.Subcommands = []*cli.Command{ca, cert, csr, crl, trust, {Name: "status", Before: optionsBeforeArgs, Action: func(ctx *cli.Context) error {
 		states, err := pkiStore(getConfig(ctx)).List()
 		if err != nil {
 			return err

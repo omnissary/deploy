@@ -26,7 +26,7 @@ func initCmd() *cli.Command {
 				Required: true,
 			},
 		},
-		Action: func(ctx *cli.Context) error {
+		Action: repositoryMutation(func(ctx *cli.Context) error {
 			cfg := getConfig(ctx)
 			pgpKeys := ctx.StringSlice("admin-pgp")
 			if len(pgpKeys) == 0 {
@@ -52,6 +52,6 @@ func initCmd() *cli.Command {
 			log.Info().Int("version", state.TargetVersion).Str("path", state.Path(cfg.FlakeDir)).Msg("schema state initialised")
 
 			return nil
-		},
+		}),
 	}
 }

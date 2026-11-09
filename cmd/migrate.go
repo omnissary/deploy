@@ -49,7 +49,7 @@ func migrateCmd() *cli.Command {
 				Usage: "report current and target schema versions without changing anything",
 			},
 		},
-		Action: func(ctx *cli.Context) error {
+		Action: repositoryMutation(func(ctx *cli.Context) error {
 			cfg := getConfig(ctx)
 			current, err := state.Load(cfg.FlakeDir)
 			if err != nil {
@@ -60,7 +60,7 @@ func migrateCmd() *cli.Command {
 				return nil
 			}
 			return runMigrations(cfg, current.Version)
-		},
+		}),
 	}
 }
 

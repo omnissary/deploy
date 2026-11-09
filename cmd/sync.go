@@ -28,9 +28,9 @@ func syncCmd() *cli.Command {
 			}
 			return requireAdminSOPSConfig(cfg)
 		},
-		Action: func(ctx *cli.Context) error {
+		Action: repositoryMutation(func(ctx *cli.Context) error {
 			return runSync(getConfig(ctx), ctx.Bool("dry-run"), os.Stdout)
-		},
+		}),
 	}
 }
 

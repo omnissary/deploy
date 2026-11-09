@@ -96,9 +96,13 @@ func provisionYggdrasil(cfg *Config, machine string, meta manifest.Machine, rota
 }
 func yggdrasilCmd() *cli.Command {
 	root := &cli.Command{Name: "yggdrasil", Usage: "manage the stored Yggdrasil identity"}
-	for _, verb := range []string{"ensure", "show", "rotate"} {
-		verb := verb
-		root.Subcommands = append(root.Subcommands, &cli.Command{Name: verb, Flags: []cli.Flag{&cli.BoolFlag{Name: "json"}}, Action: func(ctx *cli.Context) error {
+	for _, operation := range []commandOperation{
+		{name: "ensure", mutation: true},
+		{name: "show", mutation: false},
+		{name: "rotate", mutation: true},
+	} {
+		verb := operation.name
+		root.Subcommands = append(root.Subcommands, operationCommand(operation, []cli.Flag{&cli.BoolFlag{Name: "json"}}, func(ctx *cli.Context) error {
 			cfg := getConfig(ctx)
 			machine, err := requireMachine(cfg, ctx.Args().First())
 			if err != nil {
@@ -133,7 +137,7 @@ func yggdrasilCmd() *cli.Command {
 			}
 			fmt.Fprintf(ctx.App.Writer, "address: %s\npublic key: %s\n", identity.Address, identity.PublicKey)
 			return nil
-		}})
+		}))
 	}
 	return root
 }

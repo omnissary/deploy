@@ -90,7 +90,7 @@ func groupCmd() *cli.Command {
 						}
 					}
 				},
-				Action: func(ctx *cli.Context) error {
+				Action: repositoryMutation(func(ctx *cli.Context) error {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: group create <group> [machine...]")
 					}
@@ -108,7 +108,7 @@ func groupCmd() *cli.Command {
 					}
 					log.Info().Str("group", group).Strs("members", members).Msg("group created")
 					return syncAllRecipients(cfg)
-				},
+				}),
 			},
 			{
 				Name:      "add",
@@ -127,7 +127,7 @@ func groupCmd() *cli.Command {
 						}
 					}
 				},
-				Action: func(ctx *cli.Context) error {
+				Action: repositoryMutation(func(ctx *cli.Context) error {
 					if ctx.NArg() < 2 {
 						return errors.New("usage: group add <group> <machine>...")
 					}
@@ -151,7 +151,7 @@ func groupCmd() *cli.Command {
 					}
 					log.Info().Str("group", group).Strs("members", result).Msg("group updated")
 					return syncAllRecipients(cfg)
-				},
+				}),
 			},
 			{
 				Name:      "remove",
@@ -171,7 +171,7 @@ func groupCmd() *cli.Command {
 						}
 					}
 				},
-				Action: func(ctx *cli.Context) error {
+				Action: repositoryMutation(func(ctx *cli.Context) error {
 					if ctx.NArg() < 2 {
 						return errors.New("usage: group remove <group> <machine>...")
 					}
@@ -186,7 +186,7 @@ func groupCmd() *cli.Command {
 					}
 					log.Info().Str("group", group).Strs("members", result).Msg("group updated")
 					return syncAllRecipients(cfg)
-				},
+				}),
 			},
 			{
 				Name:      "delete",
@@ -200,7 +200,7 @@ func groupCmd() *cli.Command {
 						}
 					}
 				},
-				Action: func(ctx *cli.Context) error {
+				Action: repositoryMutation(func(ctx *cli.Context) error {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: group delete <group>")
 					}
@@ -217,7 +217,7 @@ func groupCmd() *cli.Command {
 					}
 					log.Info().Str("group", group).Msg("group deleted")
 					return syncAllRecipients(cfg)
-				},
+				}),
 			},
 		},
 	}

@@ -73,7 +73,7 @@ func hostCmd() *cli.Command {
 						}
 					}
 				},
-				Action: func(ctx *cli.Context) error {
+				Action: repositoryMutation(func(ctx *cli.Context) error {
 					if ctx.NArg() < 2 {
 						return errors.New("usage: host set <machine> <addr>")
 					}
@@ -89,7 +89,7 @@ func hostCmd() *cli.Command {
 						return errors.Wrapf(err, "set address for %s", machine)
 					}
 					return nil
-				},
+				}),
 			},
 		},
 	}

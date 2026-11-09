@@ -496,6 +496,5 @@ func New() *cli.App {
 			}
 		},
 	}
-	protectActions(app.Commands, "")
 	return app
 }

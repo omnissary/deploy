@@ -146,7 +146,7 @@ func secretCmd() *cli.Command {
 						}
 					}
 				},
-				Action: func(ctx *cli.Context) error {
+				Action: repositoryMutation(func(ctx *cli.Context) error {
 					if ctx.NArg() < 2 {
 						return errors.New("usage: secret set <name> <key>")
 					}
@@ -169,7 +169,7 @@ func secretCmd() *cli.Command {
 					}
 					log.Info().Str("target", target.name).Str("key", key).Msg("secret set")
 					return nil
-				},
+				}),
 			},
 			{
 				Name:      "del",
@@ -188,7 +188,7 @@ func secretCmd() *cli.Command {
 						}
 					}
 				},
-				Action: func(ctx *cli.Context) error {
+				Action: repositoryMutation(func(ctx *cli.Context) error {
 					if ctx.NArg() < 2 {
 						return errors.New("usage: secret del <name> <key>")
 					}
@@ -207,7 +207,7 @@ func secretCmd() *cli.Command {
 					}
 					log.Info().Str("target", target.name).Str("key", key).Msg("secret deleted")
 					return nil
-				},
+				}),
 			},
 			{
 				Name:      "update",
@@ -222,7 +222,7 @@ func secretCmd() *cli.Command {
 						fmt.Fprintln(ctx.App.Writer, name)
 					}
 				},
-				Action: func(ctx *cli.Context) error {
+				Action: repositoryMutation(func(ctx *cli.Context) error {
 					cfg := getConfig(ctx)
 					if ctx.NArg() == 0 {
 						return syncAllRecipients(cfg)
@@ -242,7 +242,7 @@ func secretCmd() *cli.Command {
 						return errors.Wrapf(err, "update keys for %s", target.name)
 					}
 					return nil
-				},
+				}),
 			},
 			{
 				Name:      "mv",
@@ -275,7 +275,7 @@ func secretCmd() *cli.Command {
 						}
 					}
 				},
-				Action: func(ctx *cli.Context) error {
+				Action: repositoryMutation(func(ctx *cli.Context) error {
 					if ctx.NArg() < 3 {
 						return errors.New("usage: secret mv <src-name> <src-key> <dst-name> [<dst-key>]")
 					}
@@ -314,7 +314,7 @@ func secretCmd() *cli.Command {
 						Str("dst", dst.name).Str("dst-key", dstKey).
 						Msg("secret moved")
 					return nil
-				},
+				}),
 			},
 			{
 				Name:      "verify",
@@ -367,7 +367,7 @@ func secretCmd() *cli.Command {
 						Usage: "accept the decrypted content without prompting",
 					},
 				},
-				Action: func(ctx *cli.Context) error {
+				Action: repositoryMutation(func(ctx *cli.Context) error {
 					cfg := getConfig(ctx)
 					path := ctx.String("file")
 					switch {
@@ -390,7 +390,7 @@ func secretCmd() *cli.Command {
 						accept = func(*sops.File) (bool, error) { return true, nil }
 					}
 					return repairSecretFile(cfg, path, accept)
-				},
+				}),
 			},
 		},
 	}
