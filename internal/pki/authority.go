@@ -261,7 +261,7 @@ func (s Store) RenewAuthority(id string, policies ...manifest.Authority) (*State
 		return nil, err
 	}
 	if desired.Subject.CommonName == "" {
-		desired.Subject.CommonName = id
+		desired.Subject.CommonName = existing.Subject.CommonName
 	}
 	if existing.Subject.CommonName != desired.Subject.CommonName || existing.MaxPathLen != desired.MaxPathLen || existing.MaxPathLenZero != desired.MaxPathLenZero || !slices.Equal(existing.PermittedDNSDomains, desired.PermittedDNSDomains) {
 		return nil, errors.New("authority subject or constraints changed; use staged rotation")

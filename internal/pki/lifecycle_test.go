@@ -352,11 +352,11 @@ func TestRenewImportedAuthorityPreservesDistinguishedName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ImportAuthority("root", policy, cert, private); err != nil {
+	if _, err = s.ImportAuthority("imported", manifest.Authority{}, cert, private); err != nil {
 		t.Fatal(err)
 	}
 	before, _ := ParseCert(cert)
-	state, err := s.RenewAuthority("root")
+	state, err := s.RenewAuthority("imported")
 	if err != nil {
 		t.Fatal(err)
 	}
