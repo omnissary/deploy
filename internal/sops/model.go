@@ -180,7 +180,10 @@ func MakePlan(confPath, flakeDir string, m Model) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	files := ListEncryptedFiles(flakeDir)
+	files, err := ListEncryptedFiles(flakeDir)
+	if err != nil {
+		return Plan{}, err
+	}
 	sort.Strings(files)
 	for _, path := range files {
 		rule, err := matchRule(rules, confDir, path)

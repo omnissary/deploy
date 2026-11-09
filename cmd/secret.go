@@ -547,7 +547,10 @@ func ensureSecrets(cfg *Config, machine string) error {
 }
 
 func verifyAllSecrets(cfg *Config) error {
-	paths := sops.ListEncryptedFiles(cfg.FlakeDir)
+	paths, err := sops.ListEncryptedFiles(cfg.FlakeDir)
+	if err != nil {
+		return err
+	}
 	sort.Strings(paths)
 	if len(paths) == 0 {
 		log.Info().Msg("no encrypted files found")
