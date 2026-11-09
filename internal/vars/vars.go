@@ -141,3 +141,10 @@ func MachineHostKeyPubGlob(flakeDir string) string {
 func MachineFromHostKeyPubPath(path string) string {
 	return filepath.Base(filepath.Dir(filepath.Dir(path)))
 }
+
+func PublicResourcePath(flakeDir, machine, file string) string {
+	return filepath.Join(flakeDir, "vars", "public", machine, file)
+}
+func YggdrasilArchivePath(flakeDir, machine, name string) string {
+	return filepath.Join(AdminDir(flakeDir), "yggdrasil", machine, name+".pem")
+}

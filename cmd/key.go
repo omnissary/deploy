@@ -26,6 +26,7 @@ func keyCmd() *cli.Command {
 			return requireFlake(getConfig(ctx))
 		},
 		Subcommands: []*cli.Command{
+			yggdrasilCmd(),
 			{
 				Name:      "host",
 				Usage:     "ensure the openssh host key exists and is encrypted",

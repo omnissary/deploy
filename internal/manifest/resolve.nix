@@ -17,9 +17,10 @@ flake:
        pools = diskKeys // mapAttrs (n: p: { inherit (p) keyPath; datasets=p.datasets or []; format="hex"; }) zfsPools;
        nand = attr [ "hardware" "allwinner" "chip" "storage" ] "" == "nand";
    in {
+     rootFS = attr [ "fileSystems" "/" "fsType" ] "";
      system = attr [ "nixpkgs" "hostPlatform" "system" ] "";
      hostKey = true;
-     initrdSSH = initrd && supportsSecrets && (managed || attr [ "boot" "initrd" "network" "ssh" "hostKeys" ] [] != []);
+     initrdSSH = initrd && supportsSecrets && managed;
      initrdPort = attr [ "boot" "initrd" "network" "ssh" "port" ] 2222;
      disko = (c.system.build ? diskoScript);
      inherit pools;

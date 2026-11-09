@@ -12,6 +12,9 @@ import (
 
 // Evaluate public metadata once. The fallback does not depend on key-file existence.
 func loadManifest(cfg *Config) (manifest.Manifest, error) {
+	if cfg.manifestInfo != nil {
+		return cfg.manifestInfo()
+	}
 	raw, err := nix.EvalApply(cfg.FlakeDir, "", manifest.Expression)
 	if err != nil {
 		return manifest.Manifest{}, err

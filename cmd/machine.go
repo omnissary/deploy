@@ -20,6 +20,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"git.tatikoma.dev/corpix/deploy/internal/hosts"
+	"git.tatikoma.dev/corpix/deploy/internal/installer"
 	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/nix"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
@@ -203,7 +204,11 @@ func machineInitCmd() *cli.Command {
 				}
 				return buildInstallArtifacts(ctx, cfg, machine, meta)
 			}
-			if backend == "executable" {
+			handler, err := installationBackends.Resolve(backend)
+			if err != nil {
+				return err
+			}
+			if handler.SecretDelivery() == "out-of-band" {
 				return executableInstall(ctx, cfg, machine, meta)
 			}
 			if ctx.NArg() != 2 {
@@ -220,6 +225,9 @@ func machineInitCmd() *cli.Command {
 			kexecTarball := ctx.Path("kexec")
 			if kexecTarball == "" {
 				flavor := ctx.String("kexec-flavor")
+				if !ctx.IsSet("kexec-flavor") && meta.RootFS != "zfs" && len(meta.Pools) == 0 {
+					flavor = "ext4"
+				}
 				log.Info().Str("flavor", flavor).Msg("no --kexec provided, building from images flake")
 				kexecTarball, err = buildKexecTarball(cfg.ImagesFlake, cfg.System, flavor)
 				if err != nil {
@@ -297,7 +305,11 @@ func machineInitCmd() *cli.Command {
 
 			wc := writerConfig{}
 			log.Info().Str("machine", machine).Str("host", host).Int("port", port).Msg("running NixOS Anywhere")
-			cmd := exec.Command("nixos-anywhere", args...)
+			invocation, err := handler.Command(installer.Prepared{Arguments: args})
+			if err != nil {
+				return err
+			}
+			cmd := exec.CommandContext(ctx.Context, invocation.Program, invocation.Arguments...)
 			cmd.Env = append(os.Environ(), "HOME="+cfg.FlakeDir)
 			cmd.Stdin = os.Stdin
 			cmd.Stdout = wc.stdout()
@@ -873,13 +885,7 @@ func machineUnlockZFSCmd() *cli.Command {
 				if err != nil {
 					return errors.Wrapf(err, "read ZFS root key of pool %s for %s", pool, machine)
 				}
-				remoteCmd := fmt.Sprintf(
-					"mkdir -p '%s' && cat > '%s.tmp' && mv '%s.tmp' '%s'",
-					filepath.Dir(remotePath),
-					remotePath,
-					remotePath,
-					remotePath,
-				)
+				remoteCmd := fmt.Sprintf("mkdir -p -- %s && umask 077 && cat > %s && mv -- %s %s", shellArg(filepath.Dir(remotePath)), shellArg(remotePath+".tmp"), shellArg(remotePath+".tmp"), shellArg(remotePath))
 				sshArgs := append(cfg.SSHArgs(), "-p", fmt.Sprintf("%d", initrdPort), cfg.SSHTarget(host), remoteCmd)
 				cmd := exec.Command("ssh", sshArgs...)
 				keyBytes, err := manifest.StorageKeyBytes(poolSpec, key)
@@ -1053,6 +1059,14 @@ func decryptZFSKeys(cfg *Config, machine string) (map[string]string, error) {
 		return nil, err
 	}
 	result := make(map[string]string, len(pools))
+	complete := false
+	defer func() {
+		if !complete {
+			for _, path := range result {
+				_ = os.Remove(path)
+			}
+		}
+	}()
 	if len(pools) == 0 {
 		return result, nil
 	}
@@ -1081,6 +1095,7 @@ func decryptZFSKeys(cfg *Config, machine string) (map[string]string, error) {
 			_ = os.Remove(f.Name())
 			return nil, err
 		}
+		result[remotePath] = f.Name()
 		if _, err := f.Write(keyBytes); err != nil {
 			_ = f.Close()
 			return nil, errors.Wrap(err, "write zfs key")
@@ -1093,6 +1108,7 @@ func decryptZFSKeys(cfg *Config, machine string) (map[string]string, error) {
 		}
 		result[remotePath] = f.Name()
 	}
+	complete = true
 	return result, nil
 }
 
@@ -1125,7 +1141,7 @@ func provisionMachine(cfg *Config, machine string) error {
 	if err := ensureZFSKey(cfg, machine); err != nil {
 		return err
 	}
-	return nil
+	return provisionApplicationResources(cfg, machine, meta)
 }
 
 // requireMachinesProvisioned checks, without decrypting or writing anything,
@@ -1152,6 +1168,9 @@ func requireMachinesProvisioned(cfg *Config, machines ...string) error {
 			if !fileExists(path) {
 				missing = append(missing, relToFlake(cfg, path))
 			}
+		}
+		if err := requireApplicationResources(cfg, machine, meta); err != nil {
+			return err
 		}
 		if len(missing) > 0 {
 			return errors.Errorf("machine %s is not provisioned (missing %s); run 'deploy machine provision %s'",

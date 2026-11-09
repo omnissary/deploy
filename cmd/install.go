@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"git.tatikoma.dev/corpix/atlas/errors"
+	"git.tatikoma.dev/corpix/deploy/internal/installer"
 	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/nix"
 	"github.com/urfave/cli/v2"
@@ -12,28 +13,21 @@ import (
 )
 
 // validateInstaller is the installation seam: filesystem and CPU do not select transport.
+var installationBackends = installer.NewRegistry()
+
 func validateInstaller(meta manifest.Machine, backend string) error {
-	switch backend {
-	case "nixos-anywhere":
-		if !meta.Disko {
-			return errors.New("nixos-anywhere requires a declared diskoScript")
-		}
-	case "executable":
-		if !strings.HasPrefix(meta.Installer.Attribute, "config.system.build.") {
-			return errors.New("executable installer requires a config.system.build artifact")
-		}
-	default:
-		return errors.Errorf("unsupported installation backend %q; build/deploy remain available", backend)
+	handler, err := installationBackends.Resolve(backend)
+	if err != nil {
+		return err
 	}
-	return nil
+	return handler.Validate(meta)
 }
 func buildInstallArtifacts(ctx *cli.Context, cfg *Config, machine string, meta manifest.Machine) error {
-	attrs := []string{"config.system.build.toplevel"}
-	if meta.Installer.Backend == "executable" {
-		attrs = []string{meta.Installer.Attribute}
-	} else if meta.Disko {
-		attrs = append(attrs, "config.system.build.diskoScript")
+	handler, err := installationBackends.Resolve(meta.Installer.Backend)
+	if err != nil {
+		return err
 	}
+	attrs := handler.Artifacts(meta)
 	for _, attr := range attrs {
 		path, err := nix.Build(cfg.FlakeDir, cfg.MachineAttr(machine, attr))
 		if err != nil {
@@ -56,7 +50,15 @@ func executableInstall(ctx *cli.Context, cfg *Config, machine string, meta manif
 	if err != nil {
 		return err
 	}
-	command := exec.Command(artifact)
+	handler, err := installationBackends.Resolve(meta.Installer.Backend)
+	if err != nil {
+		return err
+	}
+	invocation, err := handler.Command(installer.Prepared{Artifact: artifact})
+	if err != nil {
+		return err
+	}
+	command := exec.CommandContext(ctx.Context, invocation.Program, invocation.Arguments...)
 	command.Stdin = os.Stdin
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
@@ -66,3 +68,5 @@ func executableInstall(ctx *cli.Context, cfg *Config, machine string, meta manif
 	fmt.Fprintln(ctx.App.Writer, "flashed-needs-configuration: boot the device and deploy over its existing USB/network address; no decrypted secrets were embedded in the image")
 	return nil
 }
+
+func shellArg(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }

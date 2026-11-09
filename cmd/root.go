@@ -24,7 +24,8 @@ import (
 // Config holds values derived from global flags and is threaded through commands
 // via cli.Context metadata.
 type Config struct {
-	machineInfo func(string) (manifest.Machine, error)
+	manifestInfo func() (manifest.Manifest, error)
+	machineInfo  func(string) (manifest.Machine, error)
 	// FlakeDir is the absolute path to the flake root.
 	FlakeDir string
 	// SopsConf is the absolute path to .sops.yaml.
@@ -88,8 +89,12 @@ type fishScopedCmd struct {
 // and dynamic stanza generation. Extend this slice when new top-level commands with
 // subcommands are added.
 var fishScopedCmds = []fishScopedCmd{
+	{Parent: "pki", Subcommands: []string{"ca", "cert", "csr", "crl", "trust", "status"}},
+	{Parent: "ca", Subcommands: []string{"create", "import", "list", "show", "renew", "rotate", "activate", "retire"}},
+	{Parent: "cert", Subcommands: []string{"ensure", "issue", "import", "list", "show", "renew", "rotate", "revoke", "verify", "export"}},
+	{Parent: "yggdrasil", Subcommands: []string{"ensure", "show", "rotate"}},
 	{Parent: "secret", Subcommands: []string{"list", "get", "set", "del", "update", "mv", "verify"}},
-	{Parent: "key", Subcommands: []string{"host", "initrd", "ensure", "admin", "session"}},
+	{Parent: "key", Subcommands: []string{"host", "initrd", "ensure", "admin", "session", "yggdrasil"}},
 	{Parent: "machine", Subcommands: []string{"init", "inspect", "provision", "build", "eval", "audit", "deploy", "ssh", "unlock"}},
 	{Parent: "group", Subcommands: []string{"list", "show", "create", "add", "remove", "delete"}},
 	{Parent: "host", Subcommands: []string{"get", "set"}},
