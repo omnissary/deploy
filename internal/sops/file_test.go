@@ -411,3 +411,30 @@ func TestRekeyFailsWithoutMatchingRuleAndLeavesFileUntouched(t *testing.T) {
 		t.Fatal("file was rewritten")
 	}
 }
+
+func TestSaveRejectsExternalModification(t *testing.T) {
+	f := sopstest.NewFlake(t)
+	path := filepath.Join(f.Dir, "state.yaml")
+	if err := Create(f.SopsConf, path, []byte("key: original\n")); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Edit(path, func(other *File) error { other.Set("key", "newer"); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	opened.Set("key", "stale")
+	if err := opened.Save(); err == nil {
+		t.Fatal("stale write overwrote newer data")
+	}
+	current, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, _ := current.Get("key")
+	if value != "newer" {
+		t.Fatal(value)
+	}
+}
