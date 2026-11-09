@@ -107,3 +107,17 @@ All persistent writes go through `internal/atomicfile`: `Write` replaces a file 
 Commit completed work with one commit per feature. Commit changes to these
 instructions separately. Do not add AI attribution or co-author trailers.
 Stage explicit paths and leave unrelated changes, including reactor-ca, alone.
+
+## Go formatting and command policies
+
+Run `nix develop` and `just fmt` before committing Go changes. The pipeline uses
+betteralign, gofumpt, and patched goimports with `git.tatikoma.dev/` as the local
+import prefix. Keep long configuration literals and callbacks on multiple lines;
+the formatters do not automatically wrap them. Format only deploy's own sources,
+leaving vendor and reactor-ca untouched.
+
+Declare repository mutations explicitly with `repositoryMutation` beside their
+command actions. Generated operations use `commandOperation` and
+`operationCommand`. Attach `optionsBeforeArgs` where trailing options must be
+rejected. Do not infer locking or validation policies from command names,
+prefixes, or positions in the command tree.
