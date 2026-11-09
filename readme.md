@@ -332,6 +332,10 @@ with `git.tatikoma.dev/` as the local prefix. The development shell supplies the
 same pinned goimports regroup patch. Formatting is limited to deploy's own
 `main.go`, `cmd/`, and `internal/`; vendor sources and reactor-ca are excluded.
 
+Run `just lint` (or `just lint-sh`) in the development shell to ShellCheck
+the shell scripts under `nix/` and `tests/`, including sourced test helpers.
+CI runs the same lint recipe.
+
 ### Nix-backed end-to-end tests
 
 `just test` runs the fast packaged-CLI and compatibility checks. Select a check

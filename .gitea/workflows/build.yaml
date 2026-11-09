@@ -23,6 +23,9 @@ jobs:
       - name: smoke test
         run: nix run . -- --help
 
+      - name: lint
+        run: nix develop .#devShells.x86_64-linux.default --command just lint
+
       - name: packaged CLI and compatibility checks
         run: nix develop .#devShells.x86_64-linux.default --command just test
 

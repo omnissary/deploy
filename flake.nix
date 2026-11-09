@@ -64,6 +64,7 @@
               gofumpt
               betteralign
               just
+              shellcheck
 
               sops
               age

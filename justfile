@@ -9,6 +9,11 @@ fmt-go:
   gofumpt -w main.go cmd internal
   goimports -regroup -format-only -local git.tatikoma.dev/ -w main.go cmd internal
 
+lint: lint-sh
+
+lint-sh:
+  find nix tests -type f -name '*.sh' -print0 | xargs -0 shellcheck -x -P SCRIPTDIR
+
 test name="all":
   #!/usr/bin/env bash
   set -euo pipefail
