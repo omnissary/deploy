@@ -214,6 +214,9 @@ func machineInitCmd() *cli.Command {
 			if ctx.NArg() != 2 {
 				return errors.New("nixos-anywhere requires <machine> <host>")
 			}
+			if !cfg.SystemExplicit && meta.System == "" {
+				return errors.New("cannot resolve target architecture; supply --system")
+			}
 			if !cfg.SystemExplicit && meta.System != "" {
 				cfg.System = meta.System
 			}
@@ -318,8 +321,15 @@ func machineInitCmd() *cli.Command {
 				return errors.Wrap(err, "nixos-anywhere")
 			}
 
-			if err := hosts.SetAddress(cfg.HostsFile, machine, "", host); err != nil {
-				return errors.Wrapf(err, "register host for %s", machine)
+			if meta.YggdrasilAddressTag != "default" && meta.Addresses["default"] == "" {
+				if err := hosts.SetAddress(cfg.HostsFile, machine, "", host); err != nil {
+					return err
+				}
+			}
+			if meta.Addresses["unlock"] == "" {
+				if err := hosts.SetAddress(cfg.HostsFile, machine, "unlock", host); err != nil {
+					return err
+				}
 			}
 			log.Info().Str("machine", machine).Str("host", host).Msg("machine initialised")
 			return nil
@@ -582,8 +592,14 @@ func machineDeployCmd() *cli.Command {
 			hostFor := make(map[string]string, len(machines))
 			for _, machine := range machines {
 				if hostOverride != "" {
-					if err := hosts.SetAddress(cfg.HostsFile, machine, "", hostOverride); err != nil {
-						return errors.Wrapf(err, "register host for %s", machine)
+					meta, err := machineMetadata(cfg, machine)
+					if err != nil {
+						return err
+					}
+					if meta.YggdrasilAddressTag != "default" && meta.Addresses["default"] == "" {
+						if err := hosts.SetAddress(cfg.HostsFile, machine, "", hostOverride); err != nil {
+							return errors.Wrapf(err, "register host for %s", machine)
+						}
 					}
 					hostFor[machine] = hostOverride
 				} else {
