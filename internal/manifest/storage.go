@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"git.tatikoma.dev/corpix/atlas/errors"
+	"strings"
 )
 
 // Raw ZFS keys use base64 in YAML, decoded only at the delivery boundary.
@@ -32,11 +33,11 @@ func StorageKeyBytes(pool Pool, value string) ([]byte, error) {
 		}
 		return data, nil
 	case "hex", "":
-		key, err := hex.DecodeString(value)
+		key, err := hex.DecodeString(strings.TrimSpace(value))
 		if err != nil || len(key) != 32 {
 			return nil, errors.New("hex ZFS key must be 64 hexadecimal characters")
 		}
-		return []byte(value), nil
+		return []byte(strings.TrimSpace(value)), nil
 	case "passphrase":
 		if len(value) < 8 {
 			return nil, errors.New("ZFS passphrase is too short")

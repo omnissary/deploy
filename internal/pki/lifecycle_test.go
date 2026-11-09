@@ -3,6 +3,7 @@ package pki
 import (
 	"crypto/x509"
 	"encoding/asn1"
+	"encoding/json"
 	"encoding/pem"
 	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
@@ -266,5 +267,42 @@ func TestEmptyNixSANListsAreIdempotent(t *testing.T) {
 	b, err := s.Certificate("client", spec, "ensure", false)
 	if err != nil || a.Certificate != b.Certificate {
 		t.Fatal("empty JSON lists caused renewal", err)
+	}
+}
+
+func TestAdoptExistingCertificateChainWithoutReissue(t *testing.T) {
+	s := fixture(t)
+	s.Create("root", manifest.Authority{})
+	spec := leaf()
+	issued, err := s.Certificate("existing", spec, "issue", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chain, err := s.Chain("root", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := manifest.Target{Name: "m", Cert: "client-cert", Chain: "client-cert", Key: "client-key"}
+	path, _ := s.TargetPath(target)
+	os.MkdirAll(filepath.Dir(path), 0700)
+	data, _ := json.Marshal(map[string]string{"client-cert": issued.Certificate + chain, "client-key": issued.Key})
+	if err := sops.Create(s.Conf, path, data); err != nil {
+		t.Fatal(err)
+	}
+	spec.Target = target
+	adopted, err := s.Certificate("adopted", spec, "ensure", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adopted.Certificate != issued.Certificate || adopted.Key != issued.Key {
+		t.Fatal("adoption changed identity")
+	}
+	if _, err := s.Certificate("adopted", spec, "ensure", false); err != nil {
+		t.Fatal(err)
+	}
+	file, _ := sops.Open(path)
+	value, _ := file.Get("client-cert")
+	if strings.Count(value, "BEGIN CERTIFICATE") != 2 {
+		t.Fatal("chain duplicated or truncated")
 	}
 }

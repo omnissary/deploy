@@ -23,6 +23,7 @@ type Manifest struct {
 	Trust         map[string][]string    `json:"trust"`
 }
 type Machine struct {
+	RootFS              string            `json:"rootFS"`
 	System              string            `json:"system"`
 	HostKey             bool              `json:"hostKey"`
 	InitrdSSH           bool              `json:"initrdSSH"`
@@ -74,6 +75,7 @@ type Extension struct {
 	UTF8     *string `json:"utf8,omitempty"`
 }
 type Certificate struct {
+	KeyUsage        []string    `json:"keyUsage"`
 	PolicySource    string      `json:"policySource,omitempty"`
 	Issuer          string      `json:"issuer"`
 	Subject         string      `json:"subject"`

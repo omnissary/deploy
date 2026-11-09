@@ -37,6 +37,9 @@ func (s Store) targetMaterial(t manifest.Target) (cert, key string, err error) {
 	if err != nil {
 		return "", "", err
 	}
+	if t.Cert == "" && t.Chain != "" {
+		t.Cert = t.Chain
+	}
 	if t.Cert != "" && file.Has(t.Cert) {
 		cert, err = file.Get(t.Cert)
 		if err != nil {
@@ -45,6 +48,13 @@ func (s Store) targetMaterial(t manifest.Target) (cert, key string, err error) {
 	}
 	if t.Key != "" && file.Has(t.Key) {
 		key, err = file.Get(t.Key)
+	}
+	if cert != "" {
+		parsed, e := ParseCert(cert)
+		if e != nil {
+			return "", "", e
+		}
+		cert = certPEM(parsed.Raw)
 	}
 	return cert, key, err
 }
@@ -320,7 +330,7 @@ func (s Store) ImportCertificate(id string, spec manifest.Certificate, certifica
 	if gen == 0 {
 		return nil, errors.New("certificate issuer is unknown")
 	}
-	r := Record{ID: id, Generation: gen, Serial: cert.SerialNumber.Text(16), Certificate: certificate, Key: private, Spec: spec, External: private == ""}
+	r := Record{ID: id, Generation: gen, Serial: cert.SerialNumber.Text(16), Certificate: certPEM(cert.Raw), Key: private, Spec: spec, External: private == ""}
 	state.Records = append(state.Records, r)
 	if private != "" {
 		if err := s.PublishRecord(state, r); err != nil {

@@ -145,6 +145,23 @@ func leafTemplate(spec manifest.Certificate, now time.Time) (*x509.Certificate, 
 		return nil, err
 	}
 	c := &x509.Certificate{SerialNumber: sn, Subject: pkix.Name{CommonName: spec.Subject}, NotBefore: now.Add(-5 * time.Minute), NotAfter: now.AddDate(0, 0, spec.ValidityDays), BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature}
+	if len(spec.KeyUsage) > 0 {
+		c.KeyUsage = 0
+		for _, usage := range spec.KeyUsage {
+			switch usage {
+			case "digitalSignature":
+				c.KeyUsage |= x509.KeyUsageDigitalSignature
+			case "keyEncipherment":
+				c.KeyUsage |= x509.KeyUsageKeyEncipherment
+			case "keyAgreement":
+				c.KeyUsage |= x509.KeyUsageKeyAgreement
+			case "dataEncipherment":
+				c.KeyUsage |= x509.KeyUsageDataEncipherment
+			default:
+				return nil, errors.Errorf("unsupported leaf key usage %q", usage)
+			}
+		}
+	}
 	if spec.Organization != "" {
 		c.Subject.Organization = []string{spec.Organization}
 	}
@@ -276,7 +293,7 @@ func matchesPolicy(cert *x509.Certificate, spec manifest.Certificate, now time.T
 	if err != nil {
 		return false
 	}
-	if cert.Subject.CommonName != template.Subject.CommonName || !slices.Equal(cert.Subject.Organization, template.Subject.Organization) || !slices.Equal(cert.DNSNames, template.DNSNames) || !slices.EqualFunc(cert.IPAddresses, template.IPAddresses, func(a, b net.IP) bool { return a.Equal(b) }) || !slices.Equal(cert.EmailAddresses, template.EmailAddresses) || !slices.Equal(cert.ExtKeyUsage, template.ExtKeyUsage) {
+	if cert.KeyUsage != template.KeyUsage || cert.Subject.CommonName != template.Subject.CommonName || !slices.Equal(cert.Subject.Organization, template.Subject.Organization) || !slices.Equal(cert.DNSNames, template.DNSNames) || !slices.EqualFunc(cert.IPAddresses, template.IPAddresses, func(a, b net.IP) bool { return a.Equal(b) }) || !slices.Equal(cert.EmailAddresses, template.EmailAddresses) || !slices.Equal(cert.ExtKeyUsage, template.ExtKeyUsage) {
 		return false
 	}
 	if len(cert.URIs) != len(template.URIs) {
