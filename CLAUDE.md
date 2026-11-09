@@ -10,7 +10,10 @@ go test ./...                          # all tests
 go test ./internal/hosts/...           # single package
 go test ./cmd/... -run TestMigrate     # single test
 nix build                              # wrapped binary (adds nix, openssh, cpio, ssh-to-age, nixos-anywhere to PATH)
-nix develop                            # dev shell with go, gopls, sops, age, ssh-to-age
+nix develop                            # pinned development tools
+just lint                              # ShellCheck project shell scripts
+just test                              # packaged CLI and metadata compatibility
+just test-e2e                          # SSH deployment and encrypted-ZFS installation VMs
 ```
 
 The repo uses vendored dependencies (`vendor/`). Run `go mod vendor` after changing `go.mod`.
@@ -121,3 +124,18 @@ command actions. Generated operations use `commandOperation` and
 `operationCommand`. Attach `optionsBeforeArgs` where trailing options must be
 rejected. Do not infer locking or validation policies from command names,
 prefixes, or positions in the command tree.
+
+## Nix integration tests
+
+Register Nix checks in `tests/default.nix`. Use omnixiah's package set and
+`pkgs.omnixiah.runNixOSTest` for Linux VM tests. The omnixiah deploy input
+follows the root flake; keep deploy's overlay independently evaluable to avoid
+recursive package evaluation. Follow omnixiah's nixpkgs and flake-parts pins.
+
+Exercise the packaged CLI and real Nix, SOPS, SSH, and installer transports.
+Use disposable identities, virtual networks, and disks. Keep fast checks in
+`just test` and VM checks in `just test-e2e`; never target live infrastructure.
+Close stdin for unattended CLI calls in VM tests so SSH cannot consume the
+test driver protocol. Disable store GC pressure and scheduled maintenance in
+disposable guests, and force empty substituters when testing offline.
+Run `just lint` for changes to shell scripts; ShellCheck follows sourced helpers.
