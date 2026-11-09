@@ -19,3 +19,16 @@ func TestManualAuthorityPolicyDoesNotEvaluateNix(t *testing.T) {
 		t.Fatal(spec, err)
 	}
 }
+
+func TestLifecycleRejectsOptionsAfterResourceName(t *testing.T) {
+	command := &cli.Command{Name: "rotate", Action: func(*cli.Context) error { return nil }}
+	protectActions([]*cli.Command{command}, "pki cert")
+	set := flag.NewFlagSet("test", flag.ContinueOnError)
+	if err := set.Parse([]string{"client", "--force"}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := cli.NewContext(&cli.App{}, set, nil)
+	if err := command.Before(ctx); err == nil {
+		t.Fatal("silently ignored trailing force flag")
+	}
+}

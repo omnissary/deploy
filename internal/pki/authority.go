@@ -68,13 +68,16 @@ func (s Store) chain(id string, gen int, visited map[string]bool) (string, error
 	}
 	return value, nil
 }
-func (s Store) makeGeneration(id string, policy manifest.Authority, key crypto.Signer) (Generation, error) {
+func (s Store) makeGeneration(id string, policy manifest.Authority, key crypto.Signer, rawSubject ...[]byte) (Generation, error) {
 	template, err := authorityTemplate(policy, s.now())
 	if err != nil {
 		return Generation{}, err
 	}
 	if template.Subject.CommonName == "" {
 		template.Subject.CommonName = id
+	}
+	if len(rawSubject) > 0 {
+		template.RawSubject = rawSubject[0]
 	}
 	parent := template
 	signer := key
@@ -143,6 +146,10 @@ func (s Store) Create(id string, policy manifest.Authority) (*State, error) {
 	if s.Exists(id) {
 		return nil, errors.New("authority already exists; use renew or rotate")
 	}
+	if policy.Source != nil {
+		return nil, errors.New("authority declares existing signing material; use ca import")
+	}
+
 	key, err := newKey(policy.Algorithm)
 	if err != nil {
 		return nil, err
@@ -263,7 +270,10 @@ func (s Store) RenewAuthority(id string, policies ...manifest.Authority) (*State
 	if err != nil {
 		return nil, err
 	}
-	next, err := s.makeGeneration(id, state.Policy, key)
+	if !keyAlgorithmMatches(key, state.Policy.Algorithm) {
+		return nil, errors.New("authority algorithm changed; use staged rotation")
+	}
+	next, err := s.makeGeneration(id, state.Policy, key, existing.RawSubject)
 	if err != nil {
 		return nil, err
 	}
@@ -382,6 +392,9 @@ func (s Store) Trust(ids []string) (string, error) {
 		for _, g := range state.Generations {
 			if g.Retired {
 				continue
+			}
+			if err := s.checkIssuer(id, g.ID, map[string]bool{}); err != nil {
+				return "", err
 			}
 			c, err := ParseCert(g.Certificate)
 			if err != nil {

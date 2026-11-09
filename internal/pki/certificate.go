@@ -191,6 +191,15 @@ func (s Store) Certificate(id string, spec manifest.Certificate, operation strin
 		}
 	}
 	if old != nil {
+		for _, rev := range state.Revocations {
+			if rev.Generation == old.Generation && rev.Serial == old.Serial {
+				when := rev.Time
+				old.RevokedAt = &when
+				old.Reason = rev.Reason
+			}
+		}
+	}
+	if old != nil {
 		if old.RevokedAt != nil && operation != "rotate" {
 			return nil, errors.New("certificate is revoked; explicit rotation is required")
 		}
@@ -354,6 +363,11 @@ func (s Store) Verify(issuer, id string, checkKey bool) error {
 	if r.RevokedAt != nil {
 		return errors.New("certificate revoked")
 	}
+	for _, rev := range state.Revocations {
+		if rev.Generation == r.Generation && rev.Serial == r.Serial {
+			return errors.New("certificate serial revoked")
+		}
+	}
 	g, err := generation(state, r.Generation)
 	if err != nil {
 		return err
@@ -433,11 +447,15 @@ func (s Store) Revoke(issuer, id, serialText string, reason int) (*State, error)
 	if !found {
 		state.Revocations = append(state.Revocations, Revocation{Generation: gen, Serial: serialValue.Text(16), Time: s.now(), Reason: reason})
 	}
+	state.PendingCRLs[gen] = true
 	if err := s.Save(state); err != nil {
 		return nil, err
 	}
 	_, err = s.CRL(issuer, gen, 7)
-	return state, err
+	if err != nil {
+		return state, errors.Wrap(err, "revocation recorded; CRL remains pending, retry 'deploy pki crl generate'")
+	}
+	return state, nil
 }
 func (s Store) CRL(issuer string, gen, days int) (string, error) {
 	if days < 1 {
@@ -493,6 +511,7 @@ func (s Store) CRL(issuer string, gen, days int) (string, error) {
 	}
 	value := string(pem.EncodeToMemory(&pem.Block{Type: "X509 CRL", Bytes: der}))
 	state.CRLs[gen] = value
+	delete(state.PendingCRLs, gen)
 	return value, s.Save(state)
 }
 func (s Store) VerifyCRL(issuer string, gen int) error {

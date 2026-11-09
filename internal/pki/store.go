@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/deploy/internal/atomicfile"
 	"git.tatikoma.dev/corpix/deploy/internal/manifest"
@@ -52,6 +53,8 @@ type Revocation struct {
 }
 
 type State struct {
+	PendingCRLs map[int]bool       `json:"pendingCRLs,omitempty"`
+	Warnings    []string           `json:"warnings,omitempty"`
 	Revocations []Revocation       `json:"revocations,omitempty"`
 	ID          string             `json:"id"`
 	Policy      manifest.Authority `json:"policy"`
@@ -124,6 +127,9 @@ func (s Store) Load(id string) (*State, error) {
 	if state.CRLNumbers == nil {
 		state.CRLNumbers = map[int]int64{}
 	}
+	if state.PendingCRLs == nil {
+		state.PendingCRLs = map[int]bool{}
+	}
 	return &state, nil
 }
 func (s Store) Exists(id string) bool { _, err := os.Stat(s.privatePath(id)); return err == nil }
@@ -180,6 +186,14 @@ func (s Store) publish(state *State) error {
 		r.NotAfter = cert.NotAfter
 		r.Fingerprint = fingerprint(cert)
 		view.Records[i].Key = ""
+	}
+	seenSerials := map[string]string{}
+	for _, record := range view.Records {
+		k := fmt.Sprintf("%d:%s", record.Generation, record.Serial)
+		if fp, ok := seenSerials[k]; ok && fp != record.Fingerprint {
+			view.Warnings = append(view.Warnings, "legacy issuer serial reused: "+k+"; revocation affects every matching certificate")
+		}
+		seenSerials[k] = record.Fingerprint
 	}
 	view.Incomplete = len(view.Pending) > 0
 	view.Pending = nil

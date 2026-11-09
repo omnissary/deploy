@@ -92,7 +92,7 @@ type fishScopedCmd struct {
 // subcommands are added.
 var fishScopedCmds = []fishScopedCmd{
 	{Parent: "pki", Subcommands: []string{"ca", "cert", "csr", "crl", "trust", "status"}},
-	{Parent: "ca", Subcommands: []string{"create", "import", "list", "show", "renew", "rotate", "activate", "retire"}},
+	{Parent: "ca", Subcommands: []string{"create", "import", "list", "show", "renew", "rotate", "activate", "retire", "recover"}},
 	{Parent: "cert", Subcommands: []string{"ensure", "issue", "import", "list", "show", "renew", "rotate", "revoke", "verify", "export"}},
 	{Parent: "yggdrasil", Subcommands: []string{"ensure", "show", "rotate"}},
 	{Parent: "secret", Subcommands: []string{"list", "get", "set", "del", "update", "mv", "verify"}},

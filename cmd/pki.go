@@ -30,7 +30,7 @@ func readSpec(path string, out any) error {
 	decoder.DisallowUnknownFields()
 	return decoder.Decode(out)
 }
-func authorityPolicy(ctx *cli.Context, id string) (manifest.Authority, error) {
+func baseAuthorityPolicy(ctx *cli.Context, id string) (manifest.Authority, error) {
 	var spec manifest.Authority
 	if ctx.String("spec") != "" {
 		err := readSpec(ctx.String("spec"), &spec)
@@ -44,7 +44,7 @@ func authorityPolicy(ctx *cli.Context, id string) (manifest.Authority, error) {
 			return spec, err
 		}
 		if state.Policy.PolicySource == "nix" {
-			m, err := loadManifest(cfg)
+			m, err := loadPolicyManifest(cfg)
 			if err != nil {
 				return spec, err
 			}
@@ -56,7 +56,7 @@ func authorityPolicy(ctx *cli.Context, id string) (manifest.Authority, error) {
 		}
 		return state.Policy, nil
 	}
-	m, err := loadManifest(cfg)
+	m, err := loadPolicyManifest(cfg)
 	if err != nil {
 		return spec, err
 	}
@@ -65,6 +65,16 @@ func authorityPolicy(ctx *cli.Context, id string) (manifest.Authority, error) {
 		return spec, errors.New("authority policy not declared; supply --spec <public.json>")
 	}
 	return v, nil
+}
+func authorityPolicy(ctx *cli.Context, id string) (manifest.Authority, error) {
+	spec, err := baseAuthorityPolicy(ctx, id)
+	if err != nil {
+		return spec, err
+	}
+	if ctx.String("issuer") != "" {
+		spec.Issuer = ctx.String("issuer")
+	}
+	return spec, nil
 }
 func certificatePolicy(ctx *cli.Context, id string) (manifest.Certificate, error) {
 	var spec manifest.Certificate
@@ -94,7 +104,7 @@ func certificatePolicy(ctx *cli.Context, id string) (manifest.Certificate, error
 			}
 		}
 		if !found || spec.PolicySource == "nix" {
-			m, err := loadManifest(getConfig(ctx))
+			m, err := loadPolicyManifest(getConfig(ctx))
 			if err != nil {
 				return spec, err
 			}
@@ -132,12 +142,12 @@ func outputPEM(ctx *cli.Context, value string, private bool) error {
 	return atomicfile.Write(path, []byte(value), mode)
 }
 func pkiFlags() []cli.Flag {
-	return []cli.Flag{&cli.PathFlag{Name: "spec", Usage: "public JSON policy (no Nix evaluation)"}, &cli.StringFlag{Name: "issuer"}, &cli.PathFlag{Name: "cert-file"}, &cli.PathFlag{Name: "key-file"}, &cli.PathFlag{Name: "csr-file"}, &cli.PathFlag{Name: "out"}, &cli.IntFlag{Name: "generation"}, &cli.IntFlag{Name: "validity-days", Value: 7}, &cli.IntFlag{Name: "reason"}, &cli.StringFlag{Name: "serial"}, &cli.BoolFlag{Name: "force"}, &cli.BoolFlag{Name: "check-key"}, &cli.BoolFlag{Name: "private-key"}, &cli.BoolFlag{Name: "chain"}, &cli.BoolFlag{Name: "ca"}, &cli.BoolFlag{Name: "acknowledge-untracked"}}
+	return []cli.Flag{&cli.PathFlag{Name: "spec", Usage: "public JSON policy (no Nix evaluation)"}, &cli.StringFlag{Name: "issuer"}, &cli.PathFlag{Name: "cert-file"}, &cli.PathFlag{Name: "key-file"}, &cli.PathFlag{Name: "csr-file"}, &cli.PathFlag{Name: "out"}, &cli.IntFlag{Name: "generation"}, &cli.IntFlag{Name: "validity-days", Value: 7}, &cli.IntFlag{Name: "reason"}, &cli.StringFlag{Name: "serial"}, &cli.BoolFlag{Name: "force"}, &cli.BoolFlag{Name: "json"}, &cli.BoolFlag{Name: "check-key"}, &cli.BoolFlag{Name: "private-key"}, &cli.BoolFlag{Name: "chain"}, &cli.BoolFlag{Name: "ca"}, &cli.BoolFlag{Name: "acknowledge-untracked"}}
 }
 func pkiCmd() *cli.Command {
 	root := &cli.Command{Name: "pki", Usage: "local authority, certificate, revocation and trust lifecycle", Before: func(ctx *cli.Context) error { return requireAdminSOPSConfig(getConfig(ctx)) }}
 	ca := &cli.Command{Name: "ca", Usage: "manage named certificate authorities and signing generations"}
-	for _, verb := range []string{"create", "import", "list", "show", "renew", "rotate", "activate", "retire"} {
+	for _, verb := range []string{"create", "import", "list", "show", "renew", "rotate", "activate", "retire", "recover"} {
 		verb := verb
 		ca.Subcommands = append(ca.Subcommands, &cli.Command{Name: verb, Flags: pkiFlags(), Action: func(ctx *cli.Context) error {
 			store := pkiStore(getConfig(ctx))
@@ -179,6 +189,8 @@ func pkiCmd() *cli.Command {
 					}
 					_, err = store.ImportAuthority(id, spec, cert, key)
 				}
+			case "recover":
+				_, err = store.Open(id)
 			case "renew":
 				spec, e := authorityPolicy(ctx, id)
 				if e != nil {
@@ -356,7 +368,7 @@ func pkiCmd() *cli.Command {
 			}
 			store := pkiStore(getConfig(ctx))
 			if len(ids) == 1 && !store.Exists(ids[0]) {
-				m, err := loadManifest(getConfig(ctx))
+				m, err := loadPolicyManifest(getConfig(ctx))
 				if err != nil {
 					return err
 				}

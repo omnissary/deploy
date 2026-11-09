@@ -1,7 +1,9 @@
 package pki
 
 import (
+	"bytes"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/json"
 	"encoding/pem"
@@ -304,5 +306,62 @@ func TestAdoptExistingCertificateChainWithoutReissue(t *testing.T) {
 	value, _ := file.Get("client-cert")
 	if strings.Count(value, "BEGIN CERTIFICATE") != 2 {
 		t.Fatal("chain duplicated or truncated")
+	}
+}
+
+func TestRevocationAppliesToAllAliasesOfAnIssuerSerial(t *testing.T) {
+	s := fixture(t)
+	s.Create("root", manifest.Authority{})
+	spec := leaf()
+	r, err := s.Certificate("one", spec, "issue", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ImportCertificate("alias", spec, r.Certificate, r.Key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Revoke("root", "alias", "", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Verify("root", "one", false); err == nil {
+		t.Fatal("serial revocation ignored for alias")
+	}
+	if _, err := s.Certificate("one", spec, "ensure", false); err == nil {
+		t.Fatal("revoked alias was restored")
+	}
+}
+
+func TestRenewImportedAuthorityPreservesDistinguishedName(t *testing.T) {
+	s := fixture(t)
+	policy := manifest.Authority{Subject: "root"}
+	key, err := newKey("p256")
+	if err != nil {
+		t.Fatal(err)
+	}
+	template, err := authorityTemplate(policy, s.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	template.Subject.Organization = []string{"legacy organization"}
+	template.Subject.ExtraNames = []pkix.AttributeTypeAndValue{{Type: asn1.ObjectIdentifier{0, 9, 2342, 19200300, 100, 1, 1}, Value: "legacy-root"}}
+	cert, err := sign(template, template, key.Public(), key, s.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	private, err := keyPEM(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.ImportAuthority("root", policy, cert, private); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := ParseCert(cert)
+	state, err := s.RenewAuthority("root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := ParseCert(state.Generations[0].Certificate)
+	if err != nil || !bytes.Equal(before.RawSubject, after.RawSubject) {
+		t.Fatalf("renew changed imported DN: %v", err)
 	}
 }
