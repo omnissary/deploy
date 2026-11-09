@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -229,7 +230,7 @@ func machineInitCmd() *cli.Command {
 			sshOptions := ctx.StringSlice("ssh-option")
 
 			kexecTarball := ctx.Path("kexec")
-			if kexecTarball == "" {
+			if kexecTarball == "" && slices.Contains(strings.Split(phases, ","), "kexec") {
 				flavor := ctx.String("kexec-flavor")
 				if !ctx.IsSet("kexec-flavor") && meta.RootFS != "zfs" && len(meta.Pools) == 0 {
 					flavor = "ext4"
@@ -296,10 +297,12 @@ func machineInitCmd() *cli.Command {
 			args = append(args,
 				"--phases", phases,
 				"--post-kexec-ssh-port", "22",
-				"--kexec", kexecTarball,
 				"--no-substitute-on-destination",
 				"--extra-files", extra,
 			)
+			if kexecTarball != "" {
+				args = append(args, "--kexec", kexecTarball)
+			}
 			for remotePath, localFile := range zfsKeyFiles {
 				args = append(args, "--disk-encryption-keys", remotePath, localFile)
 			}
