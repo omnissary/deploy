@@ -5,9 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/urfave/cli/v2"
+
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/deploy/internal/repolock"
-	"github.com/urfave/cli/v2"
 )
 
 func TestOperationPolicyDoesNotDependOnName(t *testing.T) {
@@ -22,7 +23,10 @@ func TestOperationPolicyDoesNotDependOnName(t *testing.T) {
 	defer release()
 	for _, mutation := range []bool{false, true} {
 		called := false
-		command := operationCommand(commandOperation{name: "unrelated-name", mutation: mutation}, nil, func(*cli.Context) error { called = true; return nil })
+		command := operationCommand(commandOperation{name: "unrelated-name", mutation: mutation}, nil, func(*cli.Context) error {
+			called = true
+			return nil
+		})
 		command.Name = "renamed"
 		err := command.Action(ctx)
 		if mutation {

@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/urfave/cli/v2"
+
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/nix"
-	"github.com/urfave/cli/v2"
 )
 
 // Evaluate public metadata once. The fallback does not depend on key-file existence.
@@ -21,6 +22,7 @@ func loadManifest(cfg *Config) (manifest.Manifest, error) {
 	}
 	return manifest.Decode(raw)
 }
+
 func machineMetadata(cfg *Config, name string) (manifest.Machine, error) {
 	if _, err := requireMachineName(name); err != nil {
 		return manifest.Machine{}, err
@@ -62,6 +64,7 @@ func machineMetadata(cfg *Config, name string) (manifest.Machine, error) {
 	cfg.machineCache[name] = v
 	return v, nil
 }
+
 func loadPolicyManifest(cfg *Config) (manifest.Manifest, error) {
 	if cfg.manifestInfo != nil {
 		return cfg.manifestInfo()
@@ -79,6 +82,7 @@ func loadPolicyManifest(cfg *Config) (manifest.Manifest, error) {
 	}
 	return m, err
 }
+
 func machineInspectCmd() *cli.Command {
 	return &cli.Command{Before: optionsBeforeArgs, Name: "inspect", Usage: "show resolved machine capabilities and supported operations", ArgsUsage: "<machine>", Flags: []cli.Flag{&cli.BoolFlag{Name: "json"}}, Action: func(ctx *cli.Context) error {
 		if ctx.NArg() != 1 {

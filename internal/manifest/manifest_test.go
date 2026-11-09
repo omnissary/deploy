@@ -8,7 +8,10 @@ func TestCapabilities(t *testing.T) {
 		bad  bool
 	}{
 		{`{"schemaVersion":99}`, true},
-		{`{"schemaVersion":1,"machines":{"chip":{"system":"armv7l-linux","hostKey":true,"initrdSSH":false,"installer":{"backend":"executable","attribute":"config.system.build.nandFlash"}}}}`, false},
+		{
+			`{"schemaVersion":1,"machines":{"chip":{"system":"armv7l-linux","hostKey":true,"initrdSSH":false,"installer":{"backend":"executable","attribute":"config.system.build.nandFlash"}}}}`,
+			false,
+		},
 		{`{"schemaVersion":1,"machines":{"zfs":{"disko":true,"pools":{"rpool":{"keyPath":"/run/zfs-keys/rpool.key"}}}}}`, false},
 		{`{"schemaVersion":1,"machines":{"bad":{"pools":{"rpool":{"keyPath":"relative"}}}}}`, true},
 	} {

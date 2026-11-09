@@ -1,9 +1,10 @@
 package pki
 
 import (
-	"git.tatikoma.dev/corpix/deploy/internal/vars"
 	"math/big"
 	"path/filepath"
+
+	"git.tatikoma.dev/corpix/deploy/internal/vars"
 )
 
 func (s Store) requestPath(id string) string {

@@ -3,6 +3,12 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/urfave/cli/v2"
+
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/deploy/internal/atomicfile"
 	"git.tatikoma.dev/corpix/deploy/internal/hosts"
@@ -10,15 +16,12 @@ import (
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
 	ygg "git.tatikoma.dev/corpix/deploy/internal/yggdrasil"
-	"github.com/urfave/cli/v2"
-	"os"
-	"path/filepath"
-	"time"
 )
 
 func yggPublicPath(cfg *Config, machine string) string {
 	return vars.PublicResourcePath(cfg.FlakeDir, machine, "yggdrasil.json")
 }
+
 func provisionYggdrasil(cfg *Config, machine string, meta manifest.Machine, rotate bool) (ygg.Identity, error) {
 	path := vars.MachineSecretsPath(cfg.FlakeDir, machine)
 	var identity ygg.Identity
@@ -36,7 +39,7 @@ func provisionYggdrasil(cfg *Config, machine string, meta manifest.Machine, rota
 				return nil
 			}
 			archive := vars.YggdrasilArchivePath(cfg.FlakeDir, machine, fmt.Sprint(time.Now().UnixNano()))
-			if err := os.MkdirAll(filepath.Dir(archive), 0700); err != nil {
+			if err := os.MkdirAll(filepath.Dir(archive), 0o700); err != nil {
 				return err
 			}
 			if err := sops.Create(cfg.SopsConf, archive, []byte(existing)); err != nil {
@@ -70,7 +73,7 @@ func provisionYggdrasil(cfg *Config, machine string, meta manifest.Machine, rota
 		return identity, err
 	}
 	output := yggPublicPath(cfg, machine)
-	if err := os.MkdirAll(filepath.Dir(output), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
 		return identity, err
 	}
 	data = append(data, '\n')
@@ -79,7 +82,7 @@ func provisionYggdrasil(cfg *Config, machine string, meta manifest.Machine, rota
 		return identity, readErr
 	}
 	if string(existing) != string(data) {
-		if err := atomicfile.Write(output, data, 0644); err != nil {
+		if err := atomicfile.Write(output, data, 0o644); err != nil {
 			return identity, err
 		}
 	}
@@ -94,6 +97,7 @@ func provisionYggdrasil(cfg *Config, machine string, meta manifest.Machine, rota
 	}
 	return identity, nil
 }
+
 func yggdrasilCmd() *cli.Command {
 	root := &cli.Command{Name: "yggdrasil", Usage: "manage the stored Yggdrasil identity"}
 	for _, operation := range []commandOperation{

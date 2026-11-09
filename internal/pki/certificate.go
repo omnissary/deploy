@@ -6,15 +6,16 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
-	"git.tatikoma.dev/corpix/atlas/errors"
-	"git.tatikoma.dev/corpix/deploy/internal/manifest"
-	"git.tatikoma.dev/corpix/deploy/internal/sops"
 	"math/big"
 	"net"
 	"os"
 	"reflect"
 	"slices"
 	"strings"
+
+	"git.tatikoma.dev/corpix/atlas/errors"
+	"git.tatikoma.dev/corpix/deploy/internal/manifest"
+	"git.tatikoma.dev/corpix/deploy/internal/sops"
 )
 
 func current(state *State, id string) *Record {
@@ -25,6 +26,7 @@ func current(state *State, id string) *Record {
 	}
 	return nil
 }
+
 func (s Store) targetMaterial(t manifest.Target) (cert, key string, err error) {
 	if t.Name == "" {
 		return "", "", nil
@@ -58,6 +60,7 @@ func (s Store) targetMaterial(t manifest.Target) (cert, key string, err error) {
 	}
 	return cert, key, err
 }
+
 func (s Store) PublishRecord(state *State, r Record) error {
 	if r.Spec.Target.Name == "" {
 		return nil
@@ -104,6 +107,7 @@ func (s Store) PublishRecord(state *State, r Record) error {
 	state.Pending = append(state.Pending, Publication{Target: t, Values: values})
 	return nil
 }
+
 func (s Store) Certificate(id string, spec manifest.Certificate, operation string, force bool) (*Record, error) {
 	if err := validID(id); err != nil {
 		return nil, err
@@ -152,7 +156,14 @@ func (s Store) Certificate(id string, spec manifest.Certificate, operation strin
 						return nil, err
 					}
 					if cert.CheckSignatureFrom(issuer) == nil {
-						record := Record{ID: id, Generation: candidate.ID, Serial: cert.SerialNumber.Text(16), Certificate: certificate, Key: private, Spec: spec}
+						record := Record{
+							ID:          id,
+							Generation:  candidate.ID,
+							Serial:      cert.SerialNumber.Text(16),
+							Certificate: certificate,
+							Key:         private,
+							Spec:        spec,
+						}
 						state.Records = append(state.Records, record)
 						old = current(state, id)
 						adopted = true
@@ -298,6 +309,7 @@ func (s Store) Certificate(id string, spec manifest.Certificate, operation strin
 	}
 	return &record, nil
 }
+
 func (s Store) ImportCertificate(id string, spec manifest.Certificate, certificate, private string) (*Record, error) {
 	if err := validID(id); err != nil {
 		return nil, err
@@ -339,7 +351,15 @@ func (s Store) ImportCertificate(id string, spec manifest.Certificate, certifica
 	if gen == 0 {
 		return nil, errors.New("certificate issuer is unknown")
 	}
-	r := Record{ID: id, Generation: gen, Serial: cert.SerialNumber.Text(16), Certificate: certPEM(cert.Raw), Key: private, Spec: spec, External: private == ""}
+	r := Record{
+		ID:          id,
+		Generation:  gen,
+		Serial:      cert.SerialNumber.Text(16),
+		Certificate: certPEM(cert.Raw),
+		Key:         private,
+		Spec:        spec,
+		External:    private == "",
+	}
 	state.Records = append(state.Records, r)
 	if private != "" {
 		if err := s.PublishRecord(state, r); err != nil {
@@ -348,6 +368,7 @@ func (s Store) ImportCertificate(id string, spec manifest.Certificate, certifica
 	}
 	return &r, s.Save(state)
 }
+
 func (s Store) Verify(issuer, id string, checkKey bool) error {
 	state, err := s.Public(issuer)
 	if err != nil {
@@ -403,6 +424,7 @@ func (s Store) Verify(issuer, id string, checkKey bool) error {
 	}
 	return nil
 }
+
 func (s Store) Revoke(issuer, id, serialText string, reason int) (*State, error) {
 	if reason < 0 || reason > 10 || reason == 7 || reason == 8 {
 		return nil, errors.New("unsupported revocation reason")
@@ -457,6 +479,7 @@ func (s Store) Revoke(issuer, id, serialText string, reason int) (*State, error)
 	}
 	return state, nil
 }
+
 func (s Store) CRL(issuer string, gen, days int) (string, error) {
 	if days < 1 {
 		return "", errors.New("CRL validity must be positive")
@@ -504,7 +527,12 @@ func (s Store) CRL(issuer string, gen, days int) (string, error) {
 	if next.After(cert.NotAfter) {
 		next = cert.NotAfter
 	}
-	template := &x509.RevocationList{Number: newBig(state.CRLNumbers[gen]), ThisUpdate: s.now(), NextUpdate: next, RevokedCertificateEntries: entries}
+	template := &x509.RevocationList{
+		Number:                    newBig(state.CRLNumbers[gen]),
+		ThisUpdate:                s.now(),
+		NextUpdate:                next,
+		RevokedCertificateEntries: entries,
+	}
 	der, err := x509.CreateRevocationList(rand.Reader, template, cert, key)
 	if err != nil {
 		return "", err
@@ -514,6 +542,7 @@ func (s Store) CRL(issuer string, gen, days int) (string, error) {
 	delete(state.PendingCRLs, gen)
 	return value, s.Save(state)
 }
+
 func (s Store) VerifyCRL(issuer string, gen int) error {
 	state, err := s.Public(issuer)
 	if err != nil {
@@ -568,7 +597,13 @@ func (s Store) CreateCSR(id string, spec manifest.Certificate) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	csr := &x509.CertificateRequest{Subject: template.Subject, DNSNames: template.DNSNames, IPAddresses: template.IPAddresses, EmailAddresses: template.EmailAddresses, URIs: template.URIs}
+	csr := &x509.CertificateRequest{
+		Subject:        template.Subject,
+		DNSNames:       template.DNSNames,
+		IPAddresses:    template.IPAddresses,
+		EmailAddresses: template.EmailAddresses,
+		URIs:           template.URIs,
+	}
 	der, err := x509.CreateCertificateRequest(rand.Reader, csr, key)
 	if err != nil {
 		return "", err
@@ -579,11 +614,12 @@ func (s Store) CreateCSR(id string, spec manifest.Certificate) (string, error) {
 	}
 	value := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}))
 	data, _ := json.Marshal(map[string]string{"key": private, "csr": value})
-	if err := os.MkdirAll(dir(path), 0700); err != nil {
+	if err := os.MkdirAll(dir(path), 0o700); err != nil {
 		return "", err
 	}
 	return value, sops.Create(s.Conf, path, data)
 }
+
 func (s Store) SignCSR(id string, spec manifest.Certificate, value string) (*Record, error) {
 	block, _ := pem.Decode([]byte(value))
 	if block == nil {
@@ -600,7 +636,9 @@ func (s Store) SignCSR(id string, spec manifest.Certificate, value string) (*Rec
 	if err != nil {
 		return nil, err
 	}
-	if !slices.Equal(csr.DNSNames, template.DNSNames) || !slices.EqualFunc(csr.IPAddresses, template.IPAddresses, func(a, b net.IP) bool { return a.Equal(b) }) || !slices.Equal(csr.EmailAddresses, template.EmailAddresses) || len(csr.URIs) != len(template.URIs) {
+	if !slices.Equal(csr.DNSNames, template.DNSNames) || !slices.EqualFunc(csr.IPAddresses, template.IPAddresses, func(a, b net.IP) bool {
+		return a.Equal(b)
+	}) || !slices.Equal(csr.EmailAddresses, template.EmailAddresses) || len(csr.URIs) != len(template.URIs) {
 		return nil, errors.New("CSR SANs differ from explicit issuance policy")
 	}
 	for i := range csr.URIs {

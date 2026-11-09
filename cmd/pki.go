@@ -3,14 +3,16 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/urfave/cli/v2"
+
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/deploy/internal/atomicfile"
 	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/pki"
-	"github.com/urfave/cli/v2"
-	"os"
-	"path/filepath"
-	"strings"
 )
 
 func pkiStore(cfg *Config) pki.Store { return pki.Store{Root: cfg.FlakeDir, Conf: cfg.SopsConf} }
@@ -21,6 +23,7 @@ func readOptional(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	return string(data), err
 }
+
 func readSpec(path string, out any) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -30,6 +33,7 @@ func readSpec(path string, out any) error {
 	decoder.DisallowUnknownFields()
 	return decoder.Decode(out)
 }
+
 func baseAuthorityPolicy(ctx *cli.Context, id string) (manifest.Authority, error) {
 	var spec manifest.Authority
 	if ctx.String("spec") != "" {
@@ -66,6 +70,7 @@ func baseAuthorityPolicy(ctx *cli.Context, id string) (manifest.Authority, error
 	}
 	return v, nil
 }
+
 func authorityPolicy(ctx *cli.Context, id string) (manifest.Authority, error) {
 	spec, err := baseAuthorityPolicy(ctx, id)
 	if err != nil {
@@ -76,6 +81,7 @@ func authorityPolicy(ctx *cli.Context, id string) (manifest.Authority, error) {
 	}
 	return spec, nil
 }
+
 func certificatePolicy(ctx *cli.Context, id string) (manifest.Certificate, error) {
 	var spec manifest.Certificate
 	if path := ctx.String("spec"); path != "" {
@@ -123,29 +129,55 @@ func certificatePolicy(ctx *cli.Context, id string) (manifest.Certificate, error
 	}
 	return spec, nil
 }
+
 func publicOutput(ctx *cli.Context, value any) error {
 	return json.NewEncoder(ctx.App.Writer).Encode(value)
 }
+
 func outputPEM(ctx *cli.Context, value string, private bool) error {
 	if ctx.String("out") == "" {
 		_, err := fmt.Fprint(ctx.App.Writer, value)
 		return err
 	}
 	path := ctx.String("out")
-	mode := os.FileMode(0644)
+	mode := os.FileMode(0o644)
 	if private {
-		mode = 0600
+		mode = 0o600
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	return atomicfile.Write(path, []byte(value), mode)
 }
+
 func pkiFlags() []cli.Flag {
-	return []cli.Flag{&cli.PathFlag{Name: "spec", Usage: "public JSON policy (no Nix evaluation)"}, &cli.StringFlag{Name: "issuer"}, &cli.PathFlag{Name: "cert-file"}, &cli.PathFlag{Name: "key-file"}, &cli.PathFlag{Name: "csr-file"}, &cli.PathFlag{Name: "out"}, &cli.IntFlag{Name: "generation"}, &cli.IntFlag{Name: "validity-days", Value: 7}, &cli.IntFlag{Name: "reason"}, &cli.StringFlag{Name: "serial"}, &cli.BoolFlag{Name: "force"}, &cli.BoolFlag{Name: "json"}, &cli.BoolFlag{Name: "check-key"}, &cli.BoolFlag{Name: "private-key"}, &cli.BoolFlag{Name: "chain"}, &cli.BoolFlag{Name: "ca"}, &cli.BoolFlag{Name: "acknowledge-untracked"}}
+	return []cli.Flag{
+		&cli.PathFlag{Name: "spec", Usage: "public JSON policy (no Nix evaluation)"},
+		&cli.StringFlag{Name: "issuer"},
+		&cli.PathFlag{Name: "cert-file"},
+		&cli.PathFlag{Name: "key-file"},
+		&cli.PathFlag{Name: "csr-file"},
+		&cli.PathFlag{Name: "out"},
+		&cli.IntFlag{Name: "generation"},
+		&cli.IntFlag{Name: "validity-days", Value: 7},
+		&cli.IntFlag{Name: "reason"},
+		&cli.StringFlag{Name: "serial"},
+		&cli.BoolFlag{Name: "force"},
+		&cli.BoolFlag{Name: "json"},
+		&cli.BoolFlag{Name: "check-key"},
+		&cli.BoolFlag{Name: "private-key"},
+		&cli.BoolFlag{Name: "chain"},
+		&cli.BoolFlag{Name: "ca"},
+		&cli.BoolFlag{Name: "acknowledge-untracked"},
+	}
 }
+
 func pkiCmd() *cli.Command {
-	root := &cli.Command{Name: "pki", Usage: "local authority, certificate, revocation and trust lifecycle", Before: func(ctx *cli.Context) error { return requireAdminSOPSConfig(getConfig(ctx)) }}
+	root := &cli.Command{
+		Name:   "pki",
+		Usage:  "local authority, certificate, revocation and trust lifecycle",
+		Before: func(ctx *cli.Context) error { return requireAdminSOPSConfig(getConfig(ctx)) },
+	}
 	ca := &cli.Command{Name: "ca", Usage: "manage named certificate authorities and signing generations"}
 	for _, operation := range []commandOperation{
 		{name: "create", mutation: true},

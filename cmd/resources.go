@@ -2,15 +2,16 @@ package cmd
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"sort"
+
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/deploy/internal/atomicfile"
 	"git.tatikoma.dev/corpix/deploy/internal/hosts"
 	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
-	"os"
-	"path/filepath"
-	"sort"
 )
 
 func provisionApplicationResources(cfg *Config, machine string, meta manifest.Machine) error {
@@ -57,11 +58,11 @@ func provisionApplicationResources(cfg *Config, machine string, meta manifest.Ma
 		if err := syncAllRecipients(cfg); err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(groupPath), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(groupPath), 0o755); err != nil {
 			return err
 		}
 		snapshot, _ := json.Marshal(meta.Groups)
-		if err := atomicfile.Write(groupPath, append(snapshot, '\n'), 0644); err != nil {
+		if err := atomicfile.Write(groupPath, append(snapshot, '\n'), 0o644); err != nil {
 			return err
 		}
 	}

@@ -323,3 +323,11 @@ Pending CRL generation is tracked separately from revocation: a failed signer
 leaves the revocation recorded, and `pki crl generate` retries publication.
 `pki ca recover <name>` explicitly retries incomplete bundle/public-inventory
 publication without renewing a certificate or replacing a key.
+
+### Go formatting
+
+Run `nix develop` then `just fmt`. The workflow matches tunoperator: betteralign
+reorders struct fields, gofumpt formats Go sources, and goimports regroups imports
+with `git.tatikoma.dev/` as the local prefix. The development shell supplies the
+same pinned goimports regroup patch. Formatting is limited to deploy's own
+`main.go`, `cmd/`, and `internal/`; vendor sources and reactor-ca are excluded.

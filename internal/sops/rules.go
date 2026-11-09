@@ -6,10 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/deploy/internal/atomicfile"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
-	"gopkg.in/yaml.v3"
 )
 
 type sopsYAML struct {
@@ -18,9 +19,9 @@ type sopsYAML struct {
 
 type creationRule struct {
 	PathRegex string     `yaml:"path_regex"`
-	KeyGroups []keyGroup `yaml:"key_groups,omitempty"`
 	PGP       string     `yaml:"pgp,omitempty"`
 	Age       string     `yaml:"age,omitempty"`
+	KeyGroups []keyGroup `yaml:"key_groups,omitempty"`
 }
 
 type keyGroup struct {

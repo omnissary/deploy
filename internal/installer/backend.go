@@ -3,9 +3,10 @@
 package installer
 
 import (
+	"strings"
+
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/deploy/internal/manifest"
-	"strings"
 )
 
 type Invocation struct {
@@ -27,6 +28,7 @@ type Registry map[string]Backend
 func NewRegistry() Registry {
 	return Registry{"nixos-anywhere": Anywhere{}, "executable": Executable{}}
 }
+
 func (r Registry) Resolve(name string) (Backend, error) {
 	b, ok := r[name]
 	if !ok {
@@ -43,6 +45,7 @@ func (Anywhere) Validate(m manifest.Machine) error {
 	}
 	return nil
 }
+
 func (Anywhere) Artifacts(manifest.Machine) []string {
 	return []string{"config.system.build.toplevel", "config.system.build.diskoScript"}
 }

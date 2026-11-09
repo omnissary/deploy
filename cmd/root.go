@@ -12,13 +12,14 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/urfave/cli/v2"
+
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
 	"git.tatikoma.dev/corpix/deploy/internal/hosts"
 	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/nix"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
-	"github.com/urfave/cli/v2"
 )
 
 // Config holds values derived from global flags and is threaded through commands
@@ -92,12 +93,21 @@ type fishScopedCmd struct {
 // subcommands are added.
 var fishScopedCmds = []fishScopedCmd{
 	{Parent: "pki", Subcommands: []string{"ca", "cert", "csr", "crl", "trust", "status"}},
-	{Parent: "ca", Subcommands: []string{"create", "import", "list", "show", "renew", "rotate", "activate", "retire", "recover"}},
-	{Parent: "cert", Subcommands: []string{"ensure", "issue", "import", "list", "show", "renew", "rotate", "revoke", "verify", "export"}},
+	{
+		Parent:      "ca",
+		Subcommands: []string{"create", "import", "list", "show", "renew", "rotate", "activate", "retire", "recover"},
+	},
+	{
+		Parent:      "cert",
+		Subcommands: []string{"ensure", "issue", "import", "list", "show", "renew", "rotate", "revoke", "verify", "export"},
+	},
 	{Parent: "yggdrasil", Subcommands: []string{"ensure", "show", "rotate"}},
 	{Parent: "secret", Subcommands: []string{"list", "get", "set", "del", "update", "mv", "verify"}},
 	{Parent: "key", Subcommands: []string{"host", "initrd", "ensure", "admin", "session", "yggdrasil"}},
-	{Parent: "machine", Subcommands: []string{"init", "inspect", "provision", "build", "eval", "audit", "deploy", "ssh", "unlock"}},
+	{
+		Parent:      "machine",
+		Subcommands: []string{"init", "inspect", "provision", "build", "eval", "audit", "deploy", "ssh", "unlock"},
+	},
 	{Parent: "group", Subcommands: []string{"list", "show", "create", "add", "remove", "delete"}},
 	{Parent: "host", Subcommands: []string{"get", "set"}},
 	{Parent: "kexec", Subcommands: []string{"debug"}},

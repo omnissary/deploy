@@ -5,73 +5,74 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"time"
+
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/deploy/internal/atomicfile"
 	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
-	"os"
-	"path/filepath"
-	"sort"
-	"time"
 )
 
 type Generation struct {
 	NotAfter         time.Time        `json:"notAfter"`
+	Source           *manifest.Target `json:"source,omitempty"`
 	Fingerprint      string           `json:"fingerprint"`
-	ID               int              `json:"id"`
 	Certificate      string           `json:"certificate"`
 	Key              string           `json:"key,omitempty"`
-	Source           *manifest.Target `json:"source,omitempty"`
 	Issuer           string           `json:"issuer,omitempty"`
+	Revisions        []string         `json:"revisions,omitempty"`
+	ID               int              `json:"id"`
 	IssuerGeneration int              `json:"issuerGeneration,omitempty"`
 	Retired          bool             `json:"retired"`
-	Revisions        []string         `json:"revisions,omitempty"`
 }
 type Record struct {
 	NotAfter    time.Time            `json:"notAfter"`
+	RevokedAt   *time.Time           `json:"revokedAt,omitempty"`
 	Fingerprint string               `json:"fingerprint"`
 	ID          string               `json:"id"`
-	Generation  int                  `json:"generation"`
 	Serial      string               `json:"serial"`
 	Certificate string               `json:"certificate"`
 	Key         string               `json:"key,omitempty"`
 	Spec        manifest.Certificate `json:"spec"`
-	RevokedAt   *time.Time           `json:"revokedAt,omitempty"`
+	Generation  int                  `json:"generation"`
 	Reason      int                  `json:"reason,omitempty"`
 	External    bool                 `json:"external,omitempty"`
 }
 type Publication struct {
-	Target manifest.Target   `json:"target"`
 	Values map[string]string `json:"values"`
+	Target manifest.Target   `json:"target"`
 }
 type Revocation struct {
-	Generation int       `json:"generation"`
-	Serial     string    `json:"serial"`
 	Time       time.Time `json:"time"`
+	Serial     string    `json:"serial"`
+	Generation int       `json:"generation"`
 	Reason     int       `json:"reason"`
 }
 
 type State struct {
 	PendingCRLs map[int]bool       `json:"pendingCRLs,omitempty"`
-	Warnings    []string           `json:"warnings,omitempty"`
-	Revocations []Revocation       `json:"revocations,omitempty"`
-	ID          string             `json:"id"`
-	Policy      manifest.Authority `json:"policy"`
-	Active      int                `json:"active"`
-	Generations []Generation       `json:"generations"`
-	Records     []Record           `json:"records"`
 	CRLs        map[int]string     `json:"crls"`
 	CRLNumbers  map[int]int64      `json:"crlNumbers"`
-	Pending     []Publication      `json:"pending,omitempty"`
+	ID          string             `json:"id"`
 	StoreHash   string             `json:"storeHash,omitempty"`
+	Warnings    []string           `json:"warnings,omitempty"`
+	Revocations []Revocation       `json:"revocations,omitempty"`
+	Generations []Generation       `json:"generations"`
+	Records     []Record           `json:"records"`
+	Pending     []Publication      `json:"pending,omitempty"`
+	Policy      manifest.Authority `json:"policy"`
+	Active      int                `json:"active"`
 	Incomplete  bool               `json:"incomplete,omitempty"`
 	Imported    bool               `json:"imported,omitempty"`
 }
 type Store struct {
+	Now  func() time.Time
 	Root string
 	Conf string
-	Now  func() time.Time
 }
 
 func (s Store) now() time.Time {
@@ -80,16 +81,20 @@ func (s Store) now() time.Time {
 	}
 	return time.Now().UTC()
 }
+
 func (s Store) privatePath(id string) string {
 	return filepath.Join(vars.AdminDir(s.Root), "pki", id+".yaml")
 }
+
 func (s Store) publicPath(id string) string { return filepath.Join(s.Root, "vars", "pki", id+".json") }
+
 func validID(id string) error {
 	if !vars.ValidName(id) {
 		return errors.New("invalid PKI resource name")
 	}
 	return nil
 }
+
 func (s Store) TargetPath(t manifest.Target) (string, error) {
 	if err := validID(t.Name); err != nil {
 		return "", err
@@ -102,6 +107,7 @@ func (s Store) TargetPath(t manifest.Target) (string, error) {
 	}
 	return vars.MachineSecretsPath(s.Root, t.Name), nil
 }
+
 func (s Store) Load(id string) (*State, error) {
 	if err := validID(id); err != nil {
 		return nil, err
@@ -135,7 +141,7 @@ func (s Store) Load(id string) (*State, error) {
 func (s Store) Exists(id string) bool { _, err := os.Stat(s.privatePath(id)); return err == nil }
 func (s Store) writePrivate(state *State) error {
 	path := s.privatePath(state.ID)
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	state.StoreHash = ""
@@ -150,6 +156,7 @@ func (s Store) writePrivate(state *State) error {
 	}
 	return sops.Edit(path, func(f *sops.File) error { f.Set("state", string(data)); return nil })
 }
+
 func digestFile(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -158,6 +165,7 @@ func digestFile(path string) (string, error) {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:]), nil
 }
+
 func (s Store) publish(state *State) error {
 	data, err := json.Marshal(state)
 	if err != nil {
@@ -206,10 +214,10 @@ func (s Store) publish(state *State) error {
 		return err
 	}
 	path := s.publicPath(state.ID)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return atomicfile.Write(path, append(out, '\n'), 0644)
+	return atomicfile.Write(path, append(out, '\n'), 0o644)
 }
 
 // Save persists a recovery journal inside encrypted authoritative state before
@@ -226,6 +234,7 @@ func (s Store) Save(state *State) error {
 	}
 	return s.Resume(state)
 }
+
 func (s Store) Resume(state *State) error {
 	for _, p := range state.Pending {
 		path, err := s.TargetPath(p.Target)
@@ -251,6 +260,7 @@ func (s Store) Resume(state *State) error {
 	}
 	return s.publish(state)
 }
+
 func (s Store) Open(id string) (*State, error) {
 	state, err := s.Load(id)
 	if err != nil {
@@ -261,6 +271,7 @@ func (s Store) Open(id string) (*State, error) {
 	}
 	return state, nil
 }
+
 func (s Store) Public(id string) (*State, error) {
 	if err := validID(id); err != nil {
 		return nil, err
@@ -280,6 +291,7 @@ func (s Store) Public(id string) (*State, error) {
 	state.Incomplete = state.Incomplete || hash != state.StoreHash
 	return &state, nil
 }
+
 func (s Store) List() ([]State, error) {
 	files, err := filepath.Glob(filepath.Join(s.Root, "vars", "pki", "*.json"))
 	if err != nil {
@@ -298,6 +310,7 @@ func (s Store) List() ([]State, error) {
 	sort.Slice(states, func(i, j int) bool { return states[i].ID < states[j].ID })
 	return states, nil
 }
+
 func generation(state *State, id int) (*Generation, error) {
 	for i := range state.Generations {
 		if state.Generations[i].ID == id {

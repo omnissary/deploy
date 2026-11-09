@@ -1,11 +1,12 @@
 package cmd
 
 import (
+	"os"
+	"testing"
+
 	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
-	"os"
-	"testing"
 )
 
 func TestYggdrasilEnsurePreservesIdentityAndRotationIsExplicit(t *testing.T) {
@@ -31,7 +32,10 @@ func TestYggdrasilEnsurePreservesIdentityAndRotationIsExplicit(t *testing.T) {
 	if err != nil || first == rotated {
 		t.Fatal(err)
 	}
-	if err := sops.Edit(vars.MachineSecretsPath(af.cfg.FlakeDir, "m"), func(f *sops.File) error { f.Set("yggdrasil", "corrupt"); return nil }); err != nil {
+	if err := sops.Edit(vars.MachineSecretsPath(af.cfg.FlakeDir, "m"), func(f *sops.File) error {
+		f.Set("yggdrasil", "corrupt")
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := provisionYggdrasil(af.cfg, "m", meta, true); err == nil {

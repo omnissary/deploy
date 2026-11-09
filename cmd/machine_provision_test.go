@@ -1,12 +1,12 @@
 package cmd
 
 import (
-	"git.tatikoma.dev/corpix/deploy/internal/hosts"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"git.tatikoma.dev/corpix/deploy/internal/hosts"
 	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/sops/sopstest"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
@@ -95,7 +95,9 @@ func TestRequireMachinesProvisionedRequiresSopsConf(t *testing.T) {
 func TestNoInitrdSSHKeysRequiredForDisabledCapability(t *testing.T) {
 	af := newAdminFlake(t)
 	provisionWithoutZFS(t, af.cfg, "chip")
-	af.cfg.machineInfo = func(string) (manifest.Machine, error) { return manifest.Machine{HostKey: true}, nil }
+	af.cfg.machineInfo = func(string) (manifest.Machine, error) {
+		return manifest.Machine{HostKey: true}, nil
+	}
 	for _, p := range []string{vars.MachineInitrdKeyPath(af.cfg.FlakeDir, "chip"), vars.MachineInitrdKeyPubPath(af.cfg.FlakeDir, "chip")} {
 		if err := os.Remove(p); err != nil {
 			t.Fatal(err)
@@ -108,7 +110,9 @@ func TestNoInitrdSSHKeysRequiredForDisabledCapability(t *testing.T) {
 
 func TestProvisionDoesNotCreateDisabledInitrdSSHKeys(t *testing.T) {
 	af := newAdminFlake(t)
-	af.cfg.machineInfo = func(string) (manifest.Machine, error) { return manifest.Machine{HostKey: true}, nil }
+	af.cfg.machineInfo = func(string) (manifest.Machine, error) {
+		return manifest.Machine{HostKey: true}, nil
+	}
 	if err := provisionMachine(af.cfg, "chip"); err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +130,12 @@ func TestProvisionDeclaredResourcesAndReadOnlyPrerequisites(t *testing.T) {
 	af := newAdminFlake(t)
 	meta := manifest.Machine{HostKey: true, Yggdrasil: true, Certificates: []string{"client"}}
 	af.cfg.machineInfo = func(string) (manifest.Machine, error) { return meta, nil }
-	spec := manifest.Certificate{Issuer: "root", Subject: "client", Usage: []string{"clientAuth"}, Target: manifest.Target{Name: "m", Cert: "cert", Key: "key", CA: "ca"}}
+	spec := manifest.Certificate{
+		Issuer:  "root",
+		Subject: "client",
+		Usage:   []string{"clientAuth"},
+		Target:  manifest.Target{Name: "m", Cert: "cert", Key: "key", CA: "ca"},
+	}
 	af.cfg.manifestInfo = func() (manifest.Manifest, error) {
 		return manifest.Manifest{SchemaVersion: 1, Certificates: map[string]manifest.Certificate{"client": spec}}, nil
 	}

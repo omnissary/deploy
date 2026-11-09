@@ -17,8 +17,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
-	"git.tatikoma.dev/corpix/atlas/errors"
-	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"math/big"
 	"net"
 	"net/url"
@@ -26,6 +24,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"git.tatikoma.dev/corpix/atlas/errors"
+	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 )
 
 func newKey(algorithm string) (crypto.Signer, error) {
@@ -46,6 +47,7 @@ func newKey(algorithm string) (crypto.Signer, error) {
 	}
 	return nil, errors.Errorf("unsupported key algorithm %q", algorithm)
 }
+
 func keyPEM(key crypto.Signer) (string, error) {
 	der, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {
@@ -53,6 +55,7 @@ func keyPEM(key crypto.Signer) (string, error) {
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})), nil
 }
+
 func ParseKey(value string) (crypto.Signer, error) {
 	block, rest := pem.Decode([]byte(value))
 	if block == nil || len(strings.TrimSpace(string(rest))) != 0 {
@@ -79,6 +82,7 @@ func ParseKey(value string) (crypto.Signer, error) {
 	}
 	return signer, nil
 }
+
 func ParseCert(value string) (*x509.Certificate, error) {
 	block, _ := pem.Decode([]byte(value))
 	if block == nil || block.Type != "CERTIFICATE" {
@@ -86,13 +90,16 @@ func ParseCert(value string) (*x509.Certificate, error) {
 	}
 	return x509.ParseCertificate(block.Bytes)
 }
+
 func certPEM(der []byte) string {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 }
+
 func fingerprint(cert *x509.Certificate) string {
 	sum := sha256.Sum256(cert.Raw)
 	return hex.EncodeToString(sum[:])
 }
+
 func matchKey(cert *x509.Certificate, key crypto.Signer) error {
 	a, err := x509.MarshalPKIXPublicKey(cert.PublicKey)
 	if err != nil {
@@ -107,6 +114,7 @@ func matchKey(cert *x509.Certificate, key crypto.Signer) error {
 	}
 	return nil
 }
+
 func serial() (*big.Int, error) {
 	for {
 		v, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
@@ -115,6 +123,7 @@ func serial() (*big.Int, error) {
 		}
 	}
 }
+
 func oid(value string) (asn1.ObjectIdentifier, error) {
 	parts := strings.Split(value, ".")
 	out := make(asn1.ObjectIdentifier, len(parts))
@@ -133,6 +142,7 @@ func oid(value string) (asn1.ObjectIdentifier, error) {
 	}
 	return out, nil
 }
+
 func leafTemplate(spec manifest.Certificate, now time.Time) (*x509.Certificate, error) {
 	if spec.ValidityDays == 0 {
 		spec.ValidityDays = 90
@@ -144,7 +154,14 @@ func leafTemplate(spec manifest.Certificate, now time.Time) (*x509.Certificate, 
 	if err != nil {
 		return nil, err
 	}
-	c := &x509.Certificate{SerialNumber: sn, Subject: pkix.Name{CommonName: spec.Subject}, NotBefore: now.Add(-5 * time.Minute), NotAfter: now.AddDate(0, 0, spec.ValidityDays), BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature}
+	c := &x509.Certificate{
+		SerialNumber:          sn,
+		Subject:               pkix.Name{CommonName: spec.Subject},
+		NotBefore:             now.Add(-5 * time.Minute),
+		NotAfter:              now.AddDate(0, 0, spec.ValidityDays),
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+	}
 	if len(spec.KeyUsage) > 0 {
 		c.KeyUsage = 0
 		for _, usage := range spec.KeyUsage {
@@ -235,6 +252,7 @@ func leafTemplate(spec manifest.Certificate, now time.Time) (*x509.Certificate, 
 	}
 	return c, nil
 }
+
 func authorityTemplate(spec manifest.Authority, now time.Time) (*x509.Certificate, error) {
 	days := spec.ValidityDays
 	if days == 0 {
@@ -250,7 +268,18 @@ func authorityTemplate(spec manifest.Authority, now time.Time) (*x509.Certificat
 	if err != nil {
 		return nil, err
 	}
-	c := &x509.Certificate{SerialNumber: sn, Subject: pkix.Name{CommonName: spec.Subject}, NotBefore: now.Add(-5 * time.Minute), NotAfter: now.AddDate(0, 0, days), BasicConstraintsValid: true, IsCA: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign, MaxPathLen: -1, PermittedDNSDomains: spec.DNSConstraints, PermittedDNSDomainsCritical: len(spec.DNSConstraints) > 0}
+	c := &x509.Certificate{
+		SerialNumber:                sn,
+		Subject:                     pkix.Name{CommonName: spec.Subject},
+		NotBefore:                   now.Add(-5 * time.Minute),
+		NotAfter:                    now.AddDate(0, 0, days),
+		BasicConstraintsValid:       true,
+		IsCA:                        true,
+		KeyUsage:                    x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		MaxPathLen:                  -1,
+		PermittedDNSDomains:         spec.DNSConstraints,
+		PermittedDNSDomainsCritical: len(spec.DNSConstraints) > 0,
+	}
 	if spec.PathLen != nil {
 		if *spec.PathLen < 0 {
 			return nil, errors.New("pathLen must be nonnegative")
@@ -260,6 +289,7 @@ func authorityTemplate(spec manifest.Authority, now time.Time) (*x509.Certificat
 	}
 	return c, nil
 }
+
 func sign(template, parent *x509.Certificate, public crypto.PublicKey, key crypto.Signer, now time.Time) (string, error) {
 	if parent != template {
 		if !parent.IsCA || parent.KeyUsage&x509.KeyUsageCertSign == 0 {
@@ -293,7 +323,9 @@ func matchesPolicy(cert *x509.Certificate, spec manifest.Certificate, now time.T
 	if err != nil {
 		return false
 	}
-	if cert.KeyUsage != template.KeyUsage || cert.Subject.CommonName != template.Subject.CommonName || !slices.Equal(cert.Subject.Organization, template.Subject.Organization) || !slices.Equal(cert.DNSNames, template.DNSNames) || !slices.EqualFunc(cert.IPAddresses, template.IPAddresses, func(a, b net.IP) bool { return a.Equal(b) }) || !slices.Equal(cert.EmailAddresses, template.EmailAddresses) || !slices.Equal(cert.ExtKeyUsage, template.ExtKeyUsage) {
+	if cert.KeyUsage != template.KeyUsage || cert.Subject.CommonName != template.Subject.CommonName || !slices.Equal(cert.Subject.Organization, template.Subject.Organization) || !slices.Equal(cert.DNSNames, template.DNSNames) || !slices.EqualFunc(cert.IPAddresses, template.IPAddresses, func(a, b net.IP) bool {
+		return a.Equal(b)
+	}) || !slices.Equal(cert.EmailAddresses, template.EmailAddresses) || !slices.Equal(cert.ExtKeyUsage, template.ExtKeyUsage) {
 		return false
 	}
 	if len(cert.URIs) != len(template.URIs) {

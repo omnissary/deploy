@@ -6,10 +6,10 @@ import (
 	"sort"
 	"strings"
 
-	"git.tatikoma.dev/corpix/atlas/errors"
-	"git.tatikoma.dev/corpix/atlas/log"
 	"github.com/urfave/cli/v2"
 
+	"git.tatikoma.dev/corpix/atlas/errors"
+	"git.tatikoma.dev/corpix/atlas/log"
 	"git.tatikoma.dev/corpix/deploy/internal/hosts"
 	"git.tatikoma.dev/corpix/deploy/internal/nix"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"

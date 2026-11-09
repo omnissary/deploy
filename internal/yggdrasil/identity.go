@@ -8,8 +8,9 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
-	"git.tatikoma.dev/corpix/atlas/errors"
 	"net"
+
+	"git.tatikoma.dev/corpix/atlas/errors"
 )
 
 type Identity struct {
@@ -28,6 +29,7 @@ func Generate() (string, error) {
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})), nil
 }
+
 func Parse(value string) (Identity, error) {
 	block, _ := pem.Decode([]byte(value))
 	if block == nil {

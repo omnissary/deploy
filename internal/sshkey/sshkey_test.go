@@ -43,7 +43,11 @@ func TestPublicFromPrivateMatchesMarshalPublic(t *testing.T) {
 
 func TestPublicFromPrivateRejectsGarbage(t *testing.T) {
 	t.Parallel()
-	for _, in := range [][]byte{nil, []byte("not a key"), []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----\n")} {
+	for _, in := range [][]byte{
+		nil,
+		[]byte("not a key"),
+		[]byte("-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----\n"),
+	} {
 		if _, err := PublicFromPrivate(in, ""); err == nil {
 			t.Fatalf("accepted %q", in)
 		}

@@ -1,8 +1,9 @@
 package cmd
 
 import (
-	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"testing"
+
+	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 )
 
 func TestInstallerCapabilities(t *testing.T) {

@@ -5,10 +5,11 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"os"
+
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
-	"os"
 )
 
 func (s Store) RequestKey(id string) (string, error) {
@@ -21,6 +22,7 @@ func (s Store) RequestKey(id string) (string, error) {
 	}
 	return f.Get("key")
 }
+
 func (s Store) CreateAuthorityCSR(id string, policy manifest.Authority) (string, error) {
 	if err := validID(id); err != nil {
 		return "", err
@@ -47,12 +49,13 @@ func (s Store) CreateAuthorityCSR(id string, policy manifest.Authority) (string,
 		return "", err
 	}
 	path := s.requestPath(id)
-	if err := os.MkdirAll(dir(path), 0700); err != nil {
+	if err := os.MkdirAll(dir(path), 0o700); err != nil {
 		return "", err
 	}
 	data, _ := json.Marshal(map[string]string{"key": private, "csr": value})
 	return value, sops.Create(s.Conf, path, data)
 }
+
 func (s Store) SignAuthorityCSR(id string, policy manifest.Authority, value string) (string, error) {
 	if err := validID(id); err != nil {
 		return "", err
@@ -108,9 +111,16 @@ func (s Store) SignAuthorityCSR(id string, policy manifest.Authority, value stri
 	if err != nil {
 		return "", err
 	}
-	state.Records = append(state.Records, Record{ID: "ca-" + id + "-" + cert.SerialNumber.Text(16), Serial: cert.SerialNumber.Text(16), Generation: g.ID, Certificate: certificate, External: true})
+	state.Records = append(state.Records, Record{
+		ID:          "ca-" + id + "-" + cert.SerialNumber.Text(16),
+		Serial:      cert.SerialNumber.Text(16),
+		Generation:  g.ID,
+		Certificate: certificate,
+		External:    true,
+	})
 	return certificate, s.Save(state)
 }
+
 func (s Store) checkIssuer(id string, gen int, seen map[string]bool) error {
 	if seen[id] {
 		return errors.New("cyclic authority dependency")

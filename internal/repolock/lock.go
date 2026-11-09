@@ -4,10 +4,12 @@ package repolock
 import (
 	"crypto/sha256"
 	"fmt"
-	"git.tatikoma.dev/corpix/atlas/errors"
-	"golang.org/x/sys/unix"
 	"os"
 	"path/filepath"
+
+	"golang.org/x/sys/unix"
+
+	"git.tatikoma.dev/corpix/atlas/errors"
 )
 
 func Acquire(root string) (func(), error) {
@@ -19,14 +21,14 @@ func Acquire(root string) (func(), error) {
 		absolute = p
 	}
 	directory := filepath.Join(os.TempDir(), fmt.Sprintf("deploy-locks-%d", os.Getuid()))
-	if err := os.MkdirAll(directory, 0700); err != nil {
+	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return nil, err
 	}
 	info, err := os.Lstat(directory)
 	if err != nil {
 		return nil, err
 	}
-	if !info.IsDir() || info.Mode().Perm() != 0700 {
+	if !info.IsDir() || info.Mode().Perm() != 0o700 {
 		return nil, errors.New("unsafe deploy lock directory")
 	}
 	var ds unix.Stat_t
@@ -37,7 +39,7 @@ func Acquire(root string) (func(), error) {
 		return nil, errors.New("deploy lock directory has another owner")
 	}
 	path := filepath.Join(directory, fmt.Sprintf("%x.lock", sha256.Sum256([]byte(absolute))))
-	fd, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0600)
+	fd, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return nil, err
 	}

@@ -7,24 +7,29 @@ import (
 	"encoding/asn1"
 	"encoding/json"
 	"encoding/pem"
-	"git.tatikoma.dev/corpix/deploy/internal/manifest"
-	"git.tatikoma.dev/corpix/deploy/internal/sops"
-	"git.tatikoma.dev/corpix/deploy/internal/sops/sopstest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"git.tatikoma.dev/corpix/deploy/internal/manifest"
+	"git.tatikoma.dev/corpix/deploy/internal/sops"
+	"git.tatikoma.dev/corpix/deploy/internal/sops/sopstest"
 )
 
 func fixture(t *testing.T) Store {
 	t.Helper()
 	f := sopstest.NewFlake(t)
-	return Store{Root: f.Dir, Conf: f.SopsConf, Now: func() time.Time { return time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC) }}
+	return Store{Root: f.Dir, Conf: f.SopsConf, Now: func() time.Time {
+		return time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	}}
 }
+
 func leaf() manifest.Certificate {
 	return manifest.Certificate{Issuer: "root", Subject: "client", Usage: []string{"clientAuth"}}
 }
+
 func TestCertificateLifecycle(t *testing.T) {
 	s := fixture(t)
 	if _, err := s.Create("root", manifest.Authority{Subject: "root"}); err != nil {
@@ -65,6 +70,7 @@ func TestCertificateLifecycle(t *testing.T) {
 		t.Fatalf("public verification decrypted keys: %v", err)
 	}
 }
+
 func TestIntermediateAndRotation(t *testing.T) {
 	s := fixture(t)
 	zero := 0
@@ -94,6 +100,7 @@ func TestIntermediateAndRotation(t *testing.T) {
 		t.Fatal("retired active generation")
 	}
 }
+
 func TestRevocationAndCRL(t *testing.T) {
 	s := fixture(t)
 	s.Create("root", manifest.Authority{})
@@ -126,6 +133,7 @@ func TestRevocationAndCRL(t *testing.T) {
 		t.Fatal("CRL number did not advance")
 	}
 }
+
 func TestBundleJournalRecovery(t *testing.T) {
 	s := fixture(t)
 	s.Create("root", manifest.Authority{})
@@ -140,7 +148,7 @@ func TestBundleJournalRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	path, _ := s.TargetPath(target)
-	os.MkdirAll(filepath.Dir(path), 0700)
+	os.MkdirAll(filepath.Dir(path), 0o700)
 	if err := sops.Create(s.Conf, path, []byte("{}")); err != nil {
 		t.Fatal(err)
 	}
@@ -157,6 +165,7 @@ func TestBundleJournalRecovery(t *testing.T) {
 		t.Fatal("bundle not recovered")
 	}
 }
+
 func TestAtlasExtension(t *testing.T) {
 	s := fixture(t)
 	s.Create("root", manifest.Authority{})
@@ -182,6 +191,7 @@ func TestAtlasExtension(t *testing.T) {
 		t.Fatal("authorization extension missing")
 	}
 }
+
 func TestCSRPolicy(t *testing.T) {
 	s := fixture(t)
 	s.Create("root", manifest.Authority{})
@@ -200,12 +210,13 @@ func TestCSRPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
 func TestCorruptionDoesNotGenerateReplacement(t *testing.T) {
 	s := fixture(t)
 	s.Create("root", manifest.Authority{})
 	s.Certificate("client", leaf(), "issue", false)
 	path := s.privatePath("root")
-	os.WriteFile(path, []byte("broken"), 0600)
+	os.WriteFile(path, []byte("broken"), 0o600)
 	before, _ := os.ReadFile(path)
 	if _, err := s.Certificate("client", leaf(), "rotate", true); err == nil {
 		t.Fatal("corrupt state accepted")
@@ -286,7 +297,7 @@ func TestAdoptExistingCertificateChainWithoutReissue(t *testing.T) {
 	}
 	target := manifest.Target{Name: "m", Cert: "client-cert", Chain: "client-cert", Key: "client-key"}
 	path, _ := s.TargetPath(target)
-	os.MkdirAll(filepath.Dir(path), 0700)
+	os.MkdirAll(filepath.Dir(path), 0o700)
 	data, _ := json.Marshal(map[string]string{"client-cert": issued.Certificate + chain, "client-key": issued.Key})
 	if err := sops.Create(s.Conf, path, data); err != nil {
 		t.Fatal(err)

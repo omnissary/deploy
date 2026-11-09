@@ -15,10 +15,10 @@ import (
 	"syscall"
 	"time"
 
-	"git.tatikoma.dev/corpix/atlas/errors"
-	"git.tatikoma.dev/corpix/atlas/log"
 	"github.com/urfave/cli/v2"
 
+	"git.tatikoma.dev/corpix/atlas/errors"
+	"git.tatikoma.dev/corpix/atlas/log"
 	"git.tatikoma.dev/corpix/deploy/internal/hosts"
 	"git.tatikoma.dev/corpix/deploy/internal/installer"
 	"git.tatikoma.dev/corpix/deploy/internal/manifest"
@@ -152,7 +152,10 @@ func machineInitCmd() *cli.Command {
 		ArgsUsage: "<machine> <host>",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "backend", Usage: "installation backend: nixos-anywhere or executable"},
-			&cli.BoolFlag{Name: "build-only", Usage: "build declared installation artifacts without provisioning or running the installer"},
+			&cli.BoolFlag{
+				Name:  "build-only",
+				Usage: "build declared installation artifacts without provisioning or running the installer",
+			},
 			&cli.IntFlag{
 				Name:  "port",
 				Usage: "SSH port on the target",
@@ -374,9 +377,9 @@ func machineBuildCmd() *cli.Command {
 			usePrefix := len(machines) > 1
 
 			type buildResult struct {
+				err     error
 				machine string
 				path    string
-				err     error
 			}
 
 			sem := make(chan struct{}, parallelism)
@@ -1247,7 +1250,9 @@ func ensureZFSKey(cfg *Config, machine string) error {
 			if pool.Secret == "" {
 				pool.Secret = zfsRootKeyName(name)
 			}
-			if _, err := file.SetIfAbsent(pool.Secret, func() (string, error) { return manifest.GenerateStorageKey(pool.Format) }); err != nil {
+			if _, err := file.SetIfAbsent(pool.Secret, func() (string, error) {
+				return manifest.GenerateStorageKey(pool.Format)
+			}); err != nil {
 				return err
 			}
 			value, err := file.Get(pool.Secret)

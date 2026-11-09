@@ -1,8 +1,9 @@
 package installer
 
 import (
-	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"testing"
+
+	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 )
 
 func TestBackendSeam(t *testing.T) {

@@ -19,11 +19,11 @@ import (
 // decryption and written back by a single Save. A File must not be used after
 // Save.
 type File struct {
-	original [32]byte
-	path     string
 	store    common.Store
 	tree     *gosops.Tree
+	path     string
 	dataKey  []byte
+	original [32]byte
 	dirty    bool
 	saved    bool
 }

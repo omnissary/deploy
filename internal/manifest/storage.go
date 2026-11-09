@@ -4,8 +4,9 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
-	"git.tatikoma.dev/corpix/atlas/errors"
 	"strings"
+
+	"git.tatikoma.dev/corpix/atlas/errors"
 )
 
 // Raw ZFS keys use base64 in YAML, decoded only at the delivery boundary.
@@ -24,6 +25,7 @@ func GenerateStorageKey(format string) (string, error) {
 	}
 	return "", errors.Errorf("unsupported ZFS key format %q", format)
 }
+
 func StorageKeyBytes(pool Pool, value string) ([]byte, error) {
 	switch pool.Format {
 	case "raw":

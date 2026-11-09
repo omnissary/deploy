@@ -23,10 +23,10 @@ func TestYggdrasilCompatibility(t *testing.T) {
 	}
 	dir := t.TempDir()
 	key := filepath.Join(dir, "key.pem")
-	os.WriteFile(key, []byte(value), 0600)
+	os.WriteFile(key, []byte(value), 0o600)
 	data, _ := json.Marshal(map[string]string{"PrivateKeyPath": key})
 	conf := filepath.Join(dir, "conf.json")
-	os.WriteFile(conf, data, 0600)
+	os.WriteFile(conf, data, 0o600)
 	for flag, want := range map[string]string{"-address": identity.Address, "-publickey": identity.PublicKey} {
 		out, err := exec.Command("yggdrasil", "-useconffile", conf, flag).CombinedOutput()
 		if err != nil || strings.TrimSpace(string(out)) != want {

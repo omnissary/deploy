@@ -108,7 +108,12 @@ func TestDesiredRulesMachinesGroupsAndForeignRules(t *testing.T) {
 
 func TestDesiredRulesIsIdempotent(t *testing.T) {
 	t.Parallel()
-	m := Model{Admins: []string{adminA}, Sessions: []string{"age1s"}, Machines: map[string]string{"a": "age1a"}, Groups: map[string][]string{"g": {"a"}}}
+	m := Model{
+		Admins:   []string{adminA},
+		Sessions: []string{"age1s"},
+		Machines: map[string]string{"a": "age1a"},
+		Groups:   map[string][]string{"g": {"a"}},
+	}
 	first, err := DesiredRules(m, []creationRule{{PathRegex: `^x$`}})
 	if err != nil {
 		t.Fatal(err)
@@ -226,9 +231,14 @@ func newSyncFixture(t *testing.T) *syncFixture {
 	pgp := sopstest.NewPGPKey(t)
 	dir := t.TempDir()
 	f := &syncFixture{
-		dir:     dir,
-		conf:    filepath.Join(dir, ".sops.yaml"),
-		model:   Model{Admins: []string{pgp}, Sessions: []string{session.Public}, Machines: map[string]string{}, Groups: map[string][]string{}},
+		dir:  dir,
+		conf: filepath.Join(dir, ".sops.yaml"),
+		model: Model{
+			Admins:   []string{pgp},
+			Sessions: []string{session.Public},
+			Machines: map[string]string{},
+			Groups:   map[string][]string{},
+		},
 		session: session,
 	}
 	if err := InitConf(f.conf, []string{pgp}); err != nil {
@@ -489,7 +499,12 @@ func TestLoadModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Model{Admins: []string{adminA}, Sessions: []string{"age1session"}, Machines: map[string]string{"web": wantAge}, Groups: groups}
+	want := Model{
+		Admins:   []string{adminA},
+		Sessions: []string{"age1session"},
+		Machines: map[string]string{"web": wantAge},
+		Groups:   groups,
+	}
 	if !reflect.DeepEqual(m, want) {
 		t.Fatalf("model = %+v, want %+v", m, want)
 	}

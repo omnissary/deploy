@@ -16,28 +16,28 @@ var Expression string
 const Version = 1
 
 type Manifest struct {
-	SchemaVersion int                    `json:"schemaVersion"`
 	Machines      map[string]Machine     `json:"machines"`
 	Authorities   map[string]Authority   `json:"authorities"`
 	Certificates  map[string]Certificate `json:"certificates"`
 	Trust         map[string][]string    `json:"trust"`
+	SchemaVersion int                    `json:"schemaVersion"`
 }
 type Machine struct {
+	Pools               map[string]Pool   `json:"pools"`
+	Addresses           map[string]string `json:"addresses"`
+	Installer           Installer         `json:"installer"`
 	RootFS              string            `json:"rootFS"`
 	System              string            `json:"system"`
+	Unlock              string            `json:"unlock"`
+	YggdrasilAddressTag string            `json:"yggdrasilAddressTag"`
+	Source              string            `json:"source,omitempty"`
+	Groups              []string          `json:"groups"`
+	Certificates        []string          `json:"certificates"`
+	InitrdPort          int               `json:"initrdPort"`
 	HostKey             bool              `json:"hostKey"`
 	InitrdSSH           bool              `json:"initrdSSH"`
-	InitrdPort          int               `json:"initrdPort"`
 	Disko               bool              `json:"disko"`
-	Installer           Installer         `json:"installer"`
-	Unlock              string            `json:"unlock"`
-	Pools               map[string]Pool   `json:"pools"`
-	Groups              []string          `json:"groups"`
-	Addresses           map[string]string `json:"addresses"`
 	Yggdrasil           bool              `json:"yggdrasil"`
-	YggdrasilAddressTag string            `json:"yggdrasilAddressTag"`
-	Certificates        []string          `json:"certificates"`
-	Source              string            `json:"source,omitempty"`
 }
 type Installer struct {
 	Backend   string `json:"backend"`
@@ -51,46 +51,46 @@ type Pool struct {
 }
 type Target struct {
 	Name  string `json:"name"`
-	Group bool   `json:"group"`
 	Cert  string `json:"cert"`
 	Key   string `json:"key"`
 	Chain string `json:"chain"`
 	CA    string `json:"ca"`
+	Group bool   `json:"group"`
 }
 type Authority struct {
 	Target         *Target  `json:"target,omitempty"`
+	PathLen        *int     `json:"pathLen,omitempty"`
+	Source         *Target  `json:"source,omitempty"`
 	PolicySource   string   `json:"policySource,omitempty"`
 	Issuer         string   `json:"issuer"`
 	Subject        string   `json:"subject"`
 	Algorithm      string   `json:"algorithm"`
-	ValidityDays   int      `json:"validityDays"`
-	PathLen        *int     `json:"pathLen,omitempty"`
 	DNSConstraints []string `json:"dnsConstraints"`
-	Source         *Target  `json:"source,omitempty"`
+	ValidityDays   int      `json:"validityDays"`
 }
 type Extension struct {
-	OID      string  `json:"oid"`
-	Critical bool    `json:"critical"`
-	DER      string  `json:"der"`
 	UTF8     *string `json:"utf8,omitempty"`
+	OID      string  `json:"oid"`
+	DER      string  `json:"der"`
+	Critical bool    `json:"critical"`
 }
 type Certificate struct {
-	KeyUsage        []string    `json:"keyUsage"`
+	Target          Target      `json:"target"`
 	PolicySource    string      `json:"policySource,omitempty"`
 	Issuer          string      `json:"issuer"`
 	Subject         string      `json:"subject"`
 	Organization    string      `json:"organization"`
 	UID             string      `json:"uid"`
+	Algorithm       string      `json:"algorithm"`
+	KeyUsage        []string    `json:"keyUsage"`
 	DNS             []string    `json:"dns"`
 	IP              []string    `json:"ip"`
 	Email           []string    `json:"email"`
 	URI             []string    `json:"uri"`
 	Usage           []string    `json:"usage"`
-	Algorithm       string      `json:"algorithm"`
+	Extensions      []Extension `json:"extensions"`
 	ValidityDays    int         `json:"validityDays"`
 	RenewBeforeDays int         `json:"renewBeforeDays"`
-	Extensions      []Extension `json:"extensions"`
-	Target          Target      `json:"target"`
 }
 
 func Decode(data []byte) (Manifest, error) {

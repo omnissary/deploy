@@ -132,12 +132,12 @@ func TestListAdminKeysRequiresGenericRule(t *testing.T) {
 func TestEncryptedInventoryIncludesNestedAdminState(t *testing.T) {
 	dir := t.TempDir()
 	folder := filepath.Join(dir, "vars", "admin", "pki")
-	if err := os.MkdirAll(folder, 0700); err != nil {
+	if err := os.MkdirAll(folder, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	secret := filepath.Join(folder, "root.yaml")
-	os.WriteFile(secret, []byte("fixture"), 0600)
-	os.WriteFile(secret+".pub", []byte("public"), 0644)
+	os.WriteFile(secret, []byte("fixture"), 0o600)
+	os.WriteFile(secret+".pub", []byte("public"), 0o644)
 	files, err := ListEncryptedFiles(dir)
 	if err != nil {
 		t.Fatal(err)

@@ -2,17 +2,18 @@ package cmd
 
 import (
 	"encoding/json"
-	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 )
 
 func TestMetadataExpression(t *testing.T) {
 	expression := manifest.Expression
 	file := filepath.Join(t.TempDir(), "metadata.nix")
-	os.WriteFile(file, []byte(expression), 0600)
+	os.WriteFile(file, []byte(expression), 0o600)
 	if _, err := exec.LookPath("nix-instantiate"); err != nil {
 		t.Skip("nix unavailable")
 	}

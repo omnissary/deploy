@@ -3,9 +3,10 @@ package cmd
 import (
 	"strings"
 
+	"github.com/urfave/cli/v2"
+
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/deploy/internal/repolock"
-	"github.com/urfave/cli/v2"
 )
 
 type commandOperation struct {

@@ -4,12 +4,13 @@ import (
 	"crypto"
 	"crypto/x509"
 	"encoding/pem"
-	"git.tatikoma.dev/corpix/atlas/errors"
-	"git.tatikoma.dev/corpix/deploy/internal/manifest"
-	"git.tatikoma.dev/corpix/deploy/internal/sops"
 	"slices"
 	"strings"
 	"time"
+
+	"git.tatikoma.dev/corpix/atlas/errors"
+	"git.tatikoma.dev/corpix/deploy/internal/manifest"
+	"git.tatikoma.dev/corpix/deploy/internal/sops"
 )
 
 func (s Store) signer(g *Generation) (crypto.Signer, error) {
@@ -44,7 +45,9 @@ func (s Store) signer(g *Generation) (crypto.Signer, error) {
 	}
 	return key, nil
 }
+
 func (s Store) Chain(id string, gen int) (string, error) { return s.chain(id, gen, map[string]bool{}) }
+
 func (s Store) chain(id string, gen int, visited map[string]bool) (string, error) {
 	if visited[id] {
 		return "", errors.New("cyclic issuer chain")
@@ -68,6 +71,7 @@ func (s Store) chain(id string, gen int, visited map[string]bool) (string, error
 	}
 	return value, nil
 }
+
 func (s Store) makeGeneration(id string, policy manifest.Authority, key crypto.Signer, rawSubject ...[]byte) (Generation, error) {
 	template, err := authorityTemplate(policy, s.now())
 	if err != nil {
@@ -130,7 +134,13 @@ func (s Store) makeGeneration(id string, policy manifest.Authority, key crypto.S
 		if e != nil {
 			return g, e
 		}
-		parentState.Records = append(parentState.Records, Record{ID: "ca-" + id + "-" + parsed.SerialNumber.Text(16), Generation: g.IssuerGeneration, Serial: parsed.SerialNumber.Text(16), Certificate: cert, External: true})
+		parentState.Records = append(parentState.Records, Record{
+			ID:          "ca-" + id + "-" + parsed.SerialNumber.Text(16),
+			Generation:  g.IssuerGeneration,
+			Serial:      parsed.SerialNumber.Text(16),
+			Certificate: cert,
+			External:    true,
+		})
 		if e := s.Save(parentState); e != nil {
 			return g, e
 		}
@@ -139,6 +149,7 @@ func (s Store) makeGeneration(id string, policy manifest.Authority, key crypto.S
 	g.Key, err = keyPEM(key)
 	return g, err
 }
+
 func (s Store) Create(id string, policy manifest.Authority) (*State, error) {
 	if err := validID(id); err != nil {
 		return nil, err
@@ -159,12 +170,20 @@ func (s Store) Create(id string, policy manifest.Authority) (*State, error) {
 		return nil, err
 	}
 	g.ID = 1
-	state := &State{ID: id, Policy: policy, Active: 1, Generations: []Generation{g}, CRLs: map[int]string{}, CRLNumbers: map[int]int64{}}
+	state := &State{
+		ID:          id,
+		Policy:      policy,
+		Active:      1,
+		Generations: []Generation{g},
+		CRLs:        map[int]string{},
+		CRLNumbers:  map[int]int64{},
+	}
 	if err := s.publishAuthority(state); err != nil {
 		return nil, err
 	}
 	return state, s.Save(state)
 }
+
 func (s Store) ImportAuthority(id string, policy manifest.Authority, certificate, private string) (*State, error) {
 	if err := validID(id); err != nil {
 		return nil, err
@@ -234,12 +253,21 @@ func (s Store) ImportAuthority(id string, policy manifest.Authority, certificate
 		g.Issuer = policy.Issuer
 		g.IssuerGeneration = pg.ID
 	}
-	state := &State{ID: id, Policy: policy, Active: 1, Generations: []Generation{g}, Imported: true, CRLs: map[int]string{}, CRLNumbers: map[int]int64{}}
+	state := &State{
+		ID:          id,
+		Policy:      policy,
+		Active:      1,
+		Generations: []Generation{g},
+		Imported:    true,
+		CRLs:        map[int]string{},
+		CRLNumbers:  map[int]int64{},
+	}
 	if err := s.publishAuthority(state); err != nil {
 		return nil, err
 	}
 	return state, s.Save(state)
 }
+
 func (s Store) RenewAuthority(id string, policies ...manifest.Authority) (*State, error) {
 	state, err := s.Open(id)
 	if err != nil {
@@ -286,6 +314,7 @@ func (s Store) RenewAuthority(id string, policies ...manifest.Authority) (*State
 	}
 	return state, s.Save(state)
 }
+
 func (s Store) RotateAuthority(id string, policies ...manifest.Authority) (*State, error) {
 	state, err := s.Open(id)
 	if err != nil {
@@ -306,6 +335,7 @@ func (s Store) RotateAuthority(id string, policies ...manifest.Authority) (*Stat
 	state.Generations = append(state.Generations, g)
 	return state, s.Save(state)
 }
+
 func (s Store) Activate(id string, gen int) (*State, error) {
 	state, err := s.Open(id)
 	if err != nil {
@@ -334,6 +364,7 @@ func (s Store) Activate(id string, gen int) (*State, error) {
 	}
 	return state, s.Save(state)
 }
+
 func (s Store) Retire(id string, gen int, ackUntracked bool) (*State, error) {
 	state, err := s.Open(id)
 	if err != nil {
@@ -378,6 +409,7 @@ func (s Store) Retire(id string, gen int, ackUntracked bool) (*State, error) {
 	g.Retired = true
 	return state, s.Save(state)
 }
+
 func (s Store) Trust(ids []string) (string, error) {
 	var result strings.Builder
 	seen := map[string]bool{}
@@ -409,6 +441,7 @@ func (s Store) Trust(ids []string) (string, error) {
 	}
 	return result.String(), nil
 }
+
 func verifyChain(cert *x509.Certificate, chain string, now time.Time) error {
 	var certs []*x509.Certificate
 	rest := []byte(chain)
@@ -436,7 +469,12 @@ func verifyChain(cert *x509.Certificate, chain string, now time.Time) error {
 	for _, c := range certs[:len(certs)-1] {
 		intermediates.AddCert(c)
 	}
-	_, err := cert.Verify(x509.VerifyOptions{Roots: roots, Intermediates: intermediates, CurrentTime: now, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}})
+	_, err := cert.Verify(x509.VerifyOptions{
+		Roots:         roots,
+		Intermediates: intermediates,
+		CurrentTime:   now,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+	})
 	return err
 }
 

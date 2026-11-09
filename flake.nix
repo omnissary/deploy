@@ -28,6 +28,7 @@
         { pkgs, ... }:
         let
           deploy = pkgs.callPackage ./package.nix { };
+          devtools = import ./nix/devtools.nix { inherit pkgs; };
         in
         {
           packages.default = deploy;
@@ -36,8 +37,10 @@
             packages = with pkgs; [
               go
               gopls
-              gotools
+              devtools.gotools
               gofumpt
+              betteralign
+              just
 
               sops
               age

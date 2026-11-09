@@ -2,14 +2,16 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+
+	"github.com/urfave/cli/v2"
+
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/deploy/internal/installer"
 	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/nix"
-	"github.com/urfave/cli/v2"
-	"os"
-	"os/exec"
-	"strings"
 )
 
 // validateInstaller is the installation seam: filesystem and CPU do not select transport.
@@ -22,6 +24,7 @@ func validateInstaller(meta manifest.Machine, backend string) error {
 	}
 	return handler.Validate(meta)
 }
+
 func buildInstallArtifacts(ctx *cli.Context, cfg *Config, machine string, meta manifest.Machine) error {
 	handler, err := installationBackends.Resolve(meta.Installer.Backend)
 	if err != nil {
@@ -37,6 +40,7 @@ func buildInstallArtifacts(ctx *cli.Context, cfg *Config, machine string, meta m
 	}
 	return nil
 }
+
 func executableInstall(ctx *cli.Context, cfg *Config, machine string, meta manifest.Machine) error {
 	for _, flag := range []string{"kexec", "kexec-flavor", "phases", "ssh-option", "port"} {
 		if ctx.IsSet(flag) {

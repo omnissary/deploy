@@ -19,7 +19,6 @@ import (
 
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
-
 	"git.tatikoma.dev/corpix/deploy/internal/atomicfile"
 )
 
