@@ -457,6 +457,7 @@ func New() *cli.App {
 			groupCmd(),
 			migrateCmd(),
 			syncCmd(),
+			pkiCmd(),
 			machineCmd(),
 			kexecCmd(),
 			{

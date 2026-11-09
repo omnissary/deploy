@@ -57,6 +57,7 @@ type Target struct {
 	CA    string `json:"ca"`
 }
 type Authority struct {
+	Target         *Target  `json:"target,omitempty"`
 	PolicySource   string   `json:"policySource,omitempty"`
 	Issuer         string   `json:"issuer"`
 	Subject        string   `json:"subject"`
