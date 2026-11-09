@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/sops/sopstest"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
 )
@@ -86,5 +87,19 @@ func TestRequireMachinesProvisionedRequiresSopsConf(t *testing.T) {
 	}
 	if err := requireMachinesProvisioned(af.cfg, "a"); err == nil {
 		t.Fatal("expected error without .sops.yaml")
+	}
+}
+
+func TestNoInitrdSSHKeysRequiredForDisabledCapability(t *testing.T) {
+	af := newAdminFlake(t)
+	provisionWithoutZFS(t, af.cfg, "chip")
+	af.cfg.machineInfo = func(string) (manifest.Machine, error) { return manifest.Machine{HostKey: true}, nil }
+	for _, p := range []string{vars.MachineInitrdKeyPath(af.cfg.FlakeDir, "chip"), vars.MachineInitrdKeyPubPath(af.cfg.FlakeDir, "chip")} {
+		if err := os.Remove(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := requireMachinesProvisioned(af.cfg, "chip"); err != nil {
+		t.Fatal(err)
 	}
 }

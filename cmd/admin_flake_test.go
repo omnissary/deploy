@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
 	"git.tatikoma.dev/corpix/deploy/internal/sops/sopstest"
 )
@@ -29,7 +30,7 @@ func newAdminFlake(t *testing.T) adminFlake {
 	fpr := sopstest.NewPGPKey(t)
 
 	dir := t.TempDir()
-	cfg := &Config{FlakeDir: dir, SopsConf: filepath.Join(dir, ".sops.yaml")}
+	cfg := &Config{FlakeDir: dir, SopsConf: filepath.Join(dir, ".sops.yaml"), machineInfo: func(string) (manifest.Machine, error) { return manifest.Machine{HostKey: true, InitrdSSH: true}, nil }}
 	if err := sops.InitConf(cfg.SopsConf, []string{fpr}); err != nil {
 		t.Fatalf("InitConf: %v", err)
 	}

@@ -11,6 +11,8 @@
   outputs =
     inputs@{ flake-parts, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
+      flake.flakeModules.default = ./nix/flake-module.nix;
+
       flake.overlays.default = final: _prev: {
         deploy = final.callPackage ./package.nix { };
       };
