@@ -1,8 +1,64 @@
 {
   "nodes": {
+    "disko": {
+      "inputs": {
+        "nixpkgs": [
+          "omnixiah",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1792526520,
+        "narHash": "sha256-3hSJlv8mUVnZPMWK2+CM7a9O+nR6Z4mCh27NfLCmTPc=",
+        "rev": "cedd626e11b635470fa6f9fdb8ad79b0075dd7f9",
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/api/v1/repos/omnixiah/disko/archive/cedd626e11b635470fa6f9fdb8ad79b0075dd7f9.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/omnixiah/disko/archive/omnixiah.tar.gz"
+      }
+    },
+    "dns": {
+      "inputs": {
+        "flake-utils": "flake-utils",
+        "nixpkgs": [
+          "omnixiah",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1788285528,
+        "narHash": "sha256-Z6Jc5ids7RXhdMeMLbA12FZIjBBEfPkpbI3q2gPB2Qw=",
+        "rev": "8a322038fa279003d54cc6d302b2456e8a94a5c3",
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/api/v1/repos/omnixiah/dns/archive/8a322038fa279003d54cc6d302b2456e8a94a5c3.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/omnixiah/dns/archive/omnixiah.tar.gz"
+      }
+    },
+    "flake-compat": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1767039857,
+        "narHash": "sha256-vNpUSpF5Nuw8xvDLj2KCwwksIbjua2LZCqhV1LNRDns=",
+        "owner": "NixOS",
+        "repo": "flake-compat",
+        "rev": "5edf11c44bc78a0d334f6334cdaf7d60d732daab",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "flake-compat",
+        "type": "github"
+      }
+    },
     "flake-parts": {
       "inputs": {
         "nixpkgs-lib": [
+          "omnixiah",
           "nixpkgs"
         ]
       },
@@ -18,23 +74,342 @@
         "url": "https://git.tatikoma.dev/omnixiah/flake-parts/archive/omnixiah.tar.gz"
       }
     },
+    "flake-parts_2": {
+      "inputs": {
+        "nixpkgs-lib": [
+          "omnixiah",
+          "nix",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1790898470,
+        "narHash": "sha256-zTwuwezD0w3hpga6a6P8emidzAZFyWqlNeRBlpWOOl8=",
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "rev": "024633cd702b10285db5cb19b40ad48d2399ba60",
+        "type": "github"
+      },
+      "original": {
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "type": "github"
+      }
+    },
+    "flake-parts_3": {
+      "inputs": {
+        "nixpkgs-lib": "nixpkgs-lib"
+      },
+      "locked": {
+        "lastModified": 1782949081,
+        "narHash": "sha256-vp6Y/Grm98ESt6ceOkWiHWyZRDV3J1RID4w+6NWK9yA=",
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "rev": "17c9d6cdfc60c64f4ee8d306f9bc0b4ccb51481e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "type": "github"
+      }
+    },
+    "flake-utils": {
+      "locked": {
+        "lastModified": 1614513358,
+        "narHash": "sha256-LakhOx3S1dRjnh0b5Dg3mbZyH0ToC9I8Y2wKSkBaTzU=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "5466c5bbece17adaab2d82fae80b46e807611bf3",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "flake-utils_2": {
+      "inputs": {
+        "systems": [
+          "omnixiah",
+          "systems"
+        ]
+      },
+      "locked": {
+        "lastModified": 1791914995,
+        "narHash": "sha256-Zf/xfQEAasnwnmEfHqW/4hjDE/s44yn2hD4RuVIZRjA=",
+        "rev": "b7a79d3fea1e214f6d668d521cecec0c01e26544",
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/api/v1/repos/omnixiah/flake-utils/archive/b7a79d3fea1e214f6d668d521cecec0c01e26544.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/omnixiah/flake-utils/archive/omnixiah.tar.gz"
+      }
+    },
+    "git-hooks-nix": {
+      "inputs": {
+        "flake-compat": [
+          "omnixiah",
+          "nix"
+        ],
+        "nixpkgs": [
+          "omnixiah",
+          "nix",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1790500375,
+        "narHash": "sha256-XN3sDtn8TU9hAc9xqZ+SqRB/HHm2wjxM6aSWYLJU+oo=",
+        "owner": "cachix",
+        "repo": "git-hooks.nix",
+        "rev": "a0e4241b51206fbcbf52fd322eb5f0cd80f153c4",
+        "type": "github"
+      },
+      "original": {
+        "owner": "cachix",
+        "repo": "git-hooks.nix",
+        "type": "github"
+      }
+    },
+    "home-manager": {
+      "inputs": {
+        "nixpkgs": [
+          "omnixiah",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1792703141,
+        "narHash": "sha256-3X34FaSeMJXMx8CK/BN6sZ9knwNauuiJXQhLM+bQQuI=",
+        "rev": "6750249c69969d09d952efaf3fab88a2bdac7ec6",
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/api/v1/repos/omnixiah/home-manager/archive/6750249c69969d09d952efaf3fab88a2bdac7ec6.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/omnixiah/home-manager/archive/omnixiah.tar.gz"
+      }
+    },
+    "microvm": {
+      "inputs": {
+        "nixpkgs": [
+          "omnixiah",
+          "nixpkgs"
+        ],
+        "spectrum": "spectrum"
+      },
+      "locked": {
+        "lastModified": 1792810338,
+        "narHash": "sha256-0DS+A3BsygKRpKe0qmUWVDSfKqpIHZCpHJagAklE0o4=",
+        "rev": "4876e2ae2de6ce225f4ccf664ae441128aa3f03a",
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/api/v1/repos/omnixiah/microvm/archive/4876e2ae2de6ce225f4ccf664ae441128aa3f03a.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/omnixiah/microvm/archive/omnixiah.tar.gz"
+      }
+    },
+    "nix": {
+      "inputs": {
+        "flake-compat": "flake-compat",
+        "flake-parts": "flake-parts_2",
+        "git-hooks-nix": "git-hooks-nix",
+        "nixpkgs": [
+          "omnixiah",
+          "nixpkgs"
+        ],
+        "nixpkgs-23-11": [
+          "omnixiah"
+        ],
+        "nixpkgs-regression": [
+          "omnixiah"
+        ]
+      },
+      "locked": {
+        "lastModified": 1793183276,
+        "narHash": "sha256-i+B7kKyKiXe/x5EgcaVjWuo/to+jzJ9ULr5/5aMYnbk=",
+        "rev": "e014d46f91a8a4616763ba17fb2610cce9ced570",
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/api/v1/repos/omnixiah/nix/archive/e014d46f91a8a4616763ba17fb2610cce9ced570.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/omnixiah/nix/archive/omnixiah.tar.gz"
+      }
+    },
+    "nixos-anywhere": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792763369,
+        "narHash": "sha256-akZ7dkhtJhRIyFkpxK/jI5TJzPHBE9Ps/QE0FNhtbko=",
+        "rev": "cc3f53246184e07a71d78c289724ae9c30424c90",
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/api/v1/repos/omnixiah/nixos-anywhere/archive/cc3f53246184e07a71d78c289724ae9c30424c90.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/omnixiah/nixos-anywhere/archive/omnixiah.tar.gz"
+      }
+    },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1793500713,
-        "narHash": "sha256-5xSntaQ87MX+FkcssGjeh44lw0O8CNMKgoWYqFKw700=",
-        "rev": "0d2fd901eaf8dc8b4350f02b333ab7c4266881db",
+        "lastModified": 1794121861,
+        "narHash": "sha256-8MZjpjM1s6JrcRO7ju7Jst6V22DA+yR9SOaHm19Dyvk=",
+        "rev": "65ea8ab10642e4a35efc9663139507e6460cea14",
         "type": "tarball",
-        "url": "https://git.tatikoma.dev/api/v1/repos/omnixiah/nixpkgs/archive/0d2fd901eaf8dc8b4350f02b333ab7c4266881db.tar.gz"
+        "url": "https://git.tatikoma.dev/api/v1/repos/omnixiah/nixpkgs/archive/65ea8ab10642e4a35efc9663139507e6460cea14.tar.gz"
       },
       "original": {
         "type": "tarball",
         "url": "https://git.tatikoma.dev/omnixiah/nixpkgs/archive/omnixiah.tar.gz"
       }
     },
+    "nixpkgs-lib": {
+      "locked": {
+        "lastModified": 1782614948,
+        "narHash": "sha256-ePjCwr1sNm9NYUqywL7QfK3JnlS015msC+eBu2zKlp8=",
+        "owner": "nix-community",
+        "repo": "nixpkgs.lib",
+        "rev": "db3f255737b94216eb71cce308e2912cf6bc2d7c",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "repo": "nixpkgs.lib",
+        "type": "github"
+      }
+    },
+    "omnixiah": {
+      "inputs": {
+        "deploy": [],
+        "disko": "disko",
+        "dns": "dns",
+        "flake-parts": "flake-parts",
+        "flake-utils": "flake-utils_2",
+        "home-manager": "home-manager",
+        "microvm": "microvm",
+        "nix": "nix",
+        "nixos-anywhere": "nixos-anywhere",
+        "nixpkgs": "nixpkgs",
+        "sops": "sops",
+        "systems": "systems",
+        "treefmt-nix": "treefmt-nix",
+        "xlibre": "xlibre"
+      },
+      "locked": {
+        "lastModified": 1794210455,
+        "narHash": "sha256-TFmepLZtSZSn7x8Rqmf7B175ILNf34YdjNae+boHw3k=",
+        "rev": "9688754e91a4f1930f8ce3c80dc3cf15e0af18b2",
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/api/v1/repos/omnixiah/omnixiah/archive/9688754e91a4f1930f8ce3c80dc3cf15e0af18b2.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/omnixiah/omnixiah/archive/master.tar.gz"
+      }
+    },
     "root": {
       "inputs": {
-        "flake-parts": "flake-parts",
-        "nixpkgs": "nixpkgs"
+        "flake-parts": [
+          "omnixiah",
+          "flake-parts"
+        ],
+        "nixpkgs": [
+          "omnixiah",
+          "nixpkgs"
+        ],
+        "omnixiah": "omnixiah"
+      }
+    },
+    "sops": {
+      "inputs": {
+        "nixpkgs": [
+          "omnixiah",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1792655475,
+        "narHash": "sha256-4ChDjNgJM5uKwTuecLHxGlafAtoyKo5a7ip23J5IG3M=",
+        "rev": "e80b8b733d8452a751a25d0063abc9683b6c8185",
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/api/v1/repos/omnixiah/sops-nix/archive/e80b8b733d8452a751a25d0063abc9683b6c8185.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/omnixiah/sops-nix/archive/omnixiah.tar.gz"
+      }
+    },
+    "spectrum": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1786032750,
+        "narHash": "sha256-+Ba/kIn5BjvV7PN8bWOo7RoqgTY/Yv2M7qeMf3wS2Ag=",
+        "ref": "refs/heads/main",
+        "rev": "77d2389874bb092b8dbf05ecc5b1030372e80e98",
+        "revCount": 1417,
+        "type": "git",
+        "url": "https://spectrum-os.org/git/spectrum"
+      },
+      "original": {
+        "type": "git",
+        "url": "https://spectrum-os.org/git/spectrum"
+      }
+    },
+    "systems": {
+      "locked": {
+        "lastModified": 1791244623,
+        "narHash": "sha256-uuanbkFk8a313Zfrxdcz8Us/yQtaxNnKJtX8v0ZPpd8=",
+        "rev": "d36eeed142f88b5a636f2e3856a53c61654cf29b",
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/api/v1/repos/omnixiah/systems/archive/d36eeed142f88b5a636f2e3856a53c61654cf29b.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/omnixiah/systems/archive/omnixiah.tar.gz"
+      }
+    },
+    "treefmt-nix": {
+      "inputs": {
+        "nixpkgs": [
+          "omnixiah",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1791885023,
+        "narHash": "sha256-C3alQ2MEt0zVrUSho5NUDo3jmhbff72++bfwoqT9Omo=",
+        "rev": "0d6d739a833ba9a9c93034862e4a7b061a062a1c",
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/api/v1/repos/omnixiah/treefmt/archive/0d6d739a833ba9a9c93034862e4a7b061a062a1c.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/omnixiah/treefmt/archive/omnixiah.tar.gz"
+      }
+    },
+    "xlibre": {
+      "inputs": {
+        "flake-parts": "flake-parts_3",
+        "nixpkgs": [
+          "omnixiah",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1793803963,
+        "narHash": "sha256-ANaqM8IsOk3/V2n7ROQjm+Y4jBcLByqS4VfIZe1dcuM=",
+        "rev": "e077bc8c9e06c7983a876332e05094f15925fa93",
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/api/v1/repos/omnixiah/xlibre/archive/e077bc8c9e06c7983a876332e05094f15925fa93.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://git.tatikoma.dev/omnixiah/xlibre/archive/omnixiah.tar.gz"
       }
     }
   },

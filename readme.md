@@ -331,3 +331,47 @@ reorders struct fields, gofumpt formats Go sources, and goimports regroups impor
 with `git.tatikoma.dev/` as the local prefix. The development shell supplies the
 same pinned goimports regroup patch. Formatting is limited to deploy's own
 `main.go`, `cmd/`, and `internal/`; vendor sources and reactor-ca are excluded.
+
+### Nix-backed end-to-end tests
+
+`just test` runs the fast packaged-CLI and compatibility checks. Select a check
+with `just test cli` or `just test compatibility`. `just test-e2e` runs the VM
+checks; select one with `just test-e2e ssh-deploy` or `just test-e2e zfs-install`.
+All checks are exposed under `checks.<system>` and registered in
+`tests/default.nix`.
+
+The CLI check uses real Nix evaluation, SOPS encryption, temporary GPG identities,
+and throwaway authorities. It covers declarative provisioning, repeat-run
+stability, certificate renewal/rotation/revocation, overlapping CA generations,
+and recovery from a blocked publication. Compatibility checks cover ZFS,
+legacy LUKS, and UBIFS/NAND metadata without flashing hardware.
+
+The SSH VM check uses the packaged CLI to repair a missing managed host key,
+copy a real NixOS closure, activate a changed configuration, and repeat the
+deployment. It also checks that a failed connection preserves provisioned
+credentials and the active target configuration.
+
+The ZFS check runs `machine init` through real nixos-anywhere and Disko against
+a disposable virtual disk. It starts in an installer, so it selects the
+`disko,install` phases without kexec or an automatic reboot. It then boots the
+installed system through UEFI, verifies that stage 2 cannot start before
+`machine unlock` delivers the stored pool key, and repeats a cold boot with
+the same key. No decrypted pool key is included in the installed image.
+
+VM checks require a Linux runner with KVM and the Nix `kvm`/`nixos-test` system
+features. The ZFS install check currently targets x86_64-linux. CI runs fast
+checks on PRs and pushes. The separate E2E workflow is manually dispatched and
+retains VM drivers as per-user GC roots, following tunoperator’s runner
+conventions. Tests use only isolated virtual networking and prebuilt store
+closures; guests do not download packages. Test access keys are
+generated solely for the disposable VMs. No infrastructure secrets, machines,
+or physical disks are used.
+
+Linux packages and VM tests use omnixiah's shared package set and
+`pkgs.omnixiah.runNixOSTest`. Its deploy input follows the root flake with
+`inputs.omnixiah.inputs.deploy.follows = ""`, so the shared overlay and the
+tests both use this checkout. Deploy's overlay stays independent of that
+package set, allowing the input graph to refer back to the root without
+recursive package evaluation. Darwin continues to use the pinned nixpkgs
+package set. Deploy follows omnixiah’s nixpkgs and flake-parts pins; Disko
+comes from the same input graph.
