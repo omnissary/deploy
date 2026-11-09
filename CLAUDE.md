@@ -24,11 +24,14 @@ main.go                  entry point; calls cmd.New().Run()
 cmd/                     all CLI command implementations (urfave/cli v2)
 internal/
   hosts/                 YAML registry: machine->address and group membership
-  sops/                  thin wrapper around getsops/sops; sops.go = encrypt/decrypt/set/del,
-                         rules.go = .sops.yaml creation-rule management
+  sops/                  wrapper around getsops/sops; file.go = File (one decrypt, Get/Set/
+                         SetIfAbsent/Delete/Rekey, one Save), sops.go = Create/Verify/Repair,
+                         model.go = Model -> rules, MakePlan/Apply/Sync, rules.go = .sops.yaml I/O
+  keypair/               Ensure for encrypted-private/plaintext-public key pairs (never regenerates)
   vars/                  pure path/regex builders for the vars/ layout (no I/O)
   nix/                   subprocess wrappers for nix build, nix eval, nixos-rebuild, nixos-anywhere
   state/                 per-flake schema version (vars/.deploy.state) for migrate steps
+  atomicfile/            atomic Write (replace) and Create (no-clobber) for all persistent files
   agekey/                age keypair generation
   sshkey/                SSH key operations and ssh-to-age conversion
 ```
@@ -39,7 +42,9 @@ The `git.tatikoma.dev/corpix/atlas` dependency provides `errors` (wrapping) and 
 
 `cmd.New()` builds the urfave/cli app. `Config` is populated in the app's `Before` hook from global flags and stored in `cli.App.Metadata["deploy.config"]`; every action retrieves it via `getConfig(ctx)`.
 
-Top-level subcommands: `init`, `host`, `key`, `secret`, `group`, `migrate`, `machine`, `kexec`.
+Top-level subcommands: `init`, `host`, `key`, `secret`, `group`, `migrate`, `sync`, `machine`, `kexec`.
+
+Provisioning (generating keys, creating files, changing recipients) happens only in `machine init`, `machine provision`, `key ...`, `group ...` and `sync`. Data commands (`secret set/mv/...`) and use commands (`machine build/eval/audit/deploy/unlock`) must not generate keys or re-key files; use commands call `requireMachinesProvisioned`. Generated secrets go through `SetIfAbsent`, never `Set`.
 
 Name validation uses `requireSimpleName()` (pattern `^[a-z0-9][a-z0-9_-]*$`). Machine-in-flake validation calls `nix.EvalApply` to list `nixosConfigurations`. Group names and machine names are enforced to be disjoint by `requireGroupName()` in `cmd/group.go`.
 
@@ -62,7 +67,7 @@ All paths are constructed via `internal/vars`; never hard-code them in `cmd/`.
 
 ## SOPS rules in .sops.yaml
 
-`internal/sops/rules.go` owns all creation-rule management. Rules are matched by path regex:
+`.sops.yaml` is generated. `internal/sops/model.go` turns a `Model` (admin PGP keys and session age keys from the generic machine rule, machine age keys from the host `.pub` files on disk, groups from the hosts file) into the full rule list. Rules are matched by path regex:
 
 - Generic machine rule: `vars/secrets/[^/]+\.yaml$` -- recipients = admin PGP keys + session age key
 - Per-machine rule: `vars/secrets/<machine>\.yaml$` -- generic rule recipients + machine's own age key (derived from its SSH host key)
@@ -70,7 +75,7 @@ All paths are constructed via `internal/vars`; never hard-code them in `cmd/`.
 - Vars rule: `vars/secrets/<machine>/.+$` -- covers host/initrd key files
 - Admin rule: `vars/admin/.+$` -- admin-only
 
-`UpsertMachineRules` and `ReconcileGroupRules` are idempotent; they only write `.sops.yaml` and re-key files when the desired rule set differs from what's on disk. Both accept an `updateFn` callback (normally `sops.UpdateKeys`) so callers can swap it out in tests.
+`MakePlan` compares the desired rules with `.sops.yaml` and with the recipients recorded in every encrypted file's metadata (no decryption), `Apply` writes the rules and re-keys only the files that differ, `Sync` does both. A re-key interrupted part-way is picked up by the next sync. In `cmd/`, change recipients only through `syncRecipients(cfg, edit)`; never edit rules piecemeal. Rules not matching the owned patterns are preserved before the generic fallbacks.
 
 ## Hosts file format
 
@@ -91,7 +96,7 @@ Legacy flat format (`machine: addr` at top level) is still read and rewritten on
 
 ## Atomic writes
 
-Every function in `internal/sops` and `internal/hosts` that modifies a file writes to `<path>.tmp` then renames atomically. Follow this pattern for any new file-writing helpers.
+All persistent writes go through `internal/atomicfile`: `Write` replaces a file via a unique temp file, fsync and rename; `Create` does the same but fails with `os.ErrExist` instead of overwriting. Never use `os.WriteFile` for files under the flake.
 
 ## multi-machine deploy
 

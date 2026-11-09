@@ -35,7 +35,7 @@ var migrations = []migration{
 func migrateCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "migrate",
-		Usage: "bring vars/.deploy.state forward, reconcile groups, then re-encrypt and verify all secrets",
+		Usage: "bring vars/.deploy.state forward, sync recipients, then verify all secrets",
 		Before: func(ctx *cli.Context) error {
 			cfg := getConfig(ctx)
 			if err := requireFlake(cfg); err != nil {
@@ -96,13 +96,10 @@ func runMigrations(cfg *Config, currentVersion int) error {
 	}
 	log.Info().Int("version", currentVersion).Msg("schema migrations complete")
 
-	if err := reconcileGroups(cfg); err != nil {
-		return errors.Wrap(err, "reconcile groups")
+	if err := syncAllRecipients(cfg); err != nil {
+		return errors.Wrap(err, "sync recipients")
 	}
-	if err := updateAllSecrets(cfg); err != nil {
-		return errors.Wrap(err, "update all secrets")
-	}
-	if err := verifyAllSecrets(cfg, false); err != nil {
+	if err := verifyAllSecrets(cfg); err != nil {
 		return errors.Wrap(err, "secret verify")
 	}
 	log.Info().Msg("migrate complete")

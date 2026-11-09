@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -130,6 +131,7 @@ func machineCmd() *cli.Command {
 		},
 		Subcommands: []*cli.Command{
 			machineInitCmd(),
+			machineProvisionCmd(),
 			machineBuildCmd(),
 			machineEvalCmd(),
 			machineAuditCmd(),
@@ -196,7 +198,7 @@ func machineInitCmd() *cli.Command {
 
 			log.Info().Str("machine", machine).Str("host", host).Int("port", port).Msg("initialising machine")
 
-			if err := ensureMachineSecrets(cfg, machine); err != nil {
+			if err := provisionMachine(cfg, machine); err != nil {
 				return err
 			}
 
@@ -312,10 +314,8 @@ func machineBuildCmd() *cli.Command {
 				return err
 			}
 
-			for _, machine := range machines {
-				if err := ensureMachineSecrets(cfg, machine); err != nil {
-					return errors.Wrapf(err, "prepare %s", machine)
-				}
+			if err := requireMachinesProvisioned(cfg, machines...); err != nil {
+				return err
 			}
 
 			usePrefix := len(machines) > 1
@@ -403,7 +403,7 @@ func machineEvalCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			if err := ensureMachineSecrets(cfg, machine); err != nil {
+			if err := requireMachinesProvisioned(cfg, machine); err != nil {
 				return err
 			}
 
@@ -443,7 +443,7 @@ func machineAuditCmd() *cli.Command {
 				return err
 			}
 
-			if err := ensureMachineSecrets(cfg, machine); err != nil {
+			if err := requireMachinesProvisioned(cfg, machine); err != nil {
 				return err
 			}
 
@@ -527,10 +527,8 @@ func machineDeployCmd() *cli.Command {
 				return errors.New("--host can only be used when deploying a single machine")
 			}
 
-			for _, machine := range machines {
-				if err := ensureMachineSecrets(cfg, machine); err != nil {
-					return errors.Wrapf(err, "prepare %s", machine)
-				}
+			if err := requireMachinesProvisioned(cfg, machines...); err != nil {
+				return err
 			}
 
 			// Resolve and register hosts up front.
@@ -780,7 +778,7 @@ func machineUnlockZFSCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			if err := ensureMachineSecrets(cfg, machine); err != nil {
+			if err := requireMachinesProvisioned(cfg, machine); err != nil {
 				return err
 			}
 
@@ -805,12 +803,15 @@ func machineUnlockZFSCmd() *cli.Command {
 				return nil
 			}
 
+			secrets, err := sops.Open(vars.MachineSecretsPath(cfg.FlakeDir, machine))
+			if err != nil {
+				return errors.Wrapf(err, "open secrets for %s", machine)
+			}
 			wc := writerConfig{}
 			for pool, remotePath := range pools {
-				secretKey := pool + "-root-key"
-				key, err := sops.DecryptYAMLExtract(vars.MachineSecretsPath(cfg.FlakeDir, machine), secretKey)
+				key, err := secrets.Get(zfsRootKeyName(pool))
 				if err != nil {
-					return errors.Wrapf(err, "decrypt %s for %s", secretKey, machine)
+					return errors.Wrapf(err, "read ZFS root key of pool %s for %s", pool, machine)
 				}
 				remoteCmd := fmt.Sprintf(
 					"mkdir -p '%s' && cat > '%s.tmp' && mv '%s.tmp' '%s'",
@@ -848,7 +849,7 @@ func prepareExtraSSHKeys(cfg *Config, machine, extraDir string) error {
 	}
 
 	log.Debug().Str("machine", machine).Msg("decrypting host ssh key for extra files")
-	privPEM, err := sops.DecryptBinary(srcPriv)
+	privPEM, err := sops.ReadFile(srcPriv)
 	if err != nil {
 		return errors.Wrapf(err, "decrypt host private key for %s", machine)
 	}
@@ -1020,12 +1021,18 @@ func decryptZFSKeys(cfg *Config, machine string) (map[string]string, error) {
 		return nil, err
 	}
 	result := make(map[string]string, len(pools))
+	if len(pools) == 0 {
+		return result, nil
+	}
+	secrets, err := sops.Open(vars.MachineSecretsPath(cfg.FlakeDir, machine))
+	if err != nil {
+		return nil, errors.Wrapf(err, "open secrets for %s", machine)
+	}
 	for pool, remotePath := range pools {
-		secretKey := pool + "-root-key"
 		log.Debug().Str("machine", machine).Str("pool", pool).Msg("decrypting ZFS root key")
-		key, err := sops.DecryptYAMLExtract(vars.MachineSecretsPath(cfg.FlakeDir, machine), secretKey)
+		key, err := secrets.Get(zfsRootKeyName(pool))
 		if err != nil {
-			return nil, errors.Wrapf(err, "decrypt %s for %s", secretKey, machine)
+			return nil, errors.Wrapf(err, "read ZFS root key of pool %s for %s", pool, machine)
 		}
 		f, err := os.CreateTemp("", "deploy-zfskey-*")
 		if err != nil {
@@ -1046,9 +1053,9 @@ func decryptZFSKeys(cfg *Config, machine string) (map[string]string, error) {
 	return result, nil
 }
 
-// ensureMachineSecrets idempotently provisions every key file and secrets file
-// needed to build or deploy a machine. Safe to call before any machine command.
-func ensureMachineSecrets(cfg *Config, machine string) error {
+// provisionMachine idempotently creates every key and secrets file a machine
+// needs and syncs recipients. It never replaces existing keys.
+func provisionMachine(cfg *Config, machine string) error {
 	if err := ensureSopsConf(cfg); err != nil {
 		return err
 	}
@@ -1061,10 +1068,68 @@ func ensureMachineSecrets(cfg *Config, machine string) error {
 	if err := ensureSecrets(cfg, machine); err != nil {
 		return err
 	}
-	if err := reconcileGroups(cfg); err != nil {
-		return errors.Wrap(err, "reconcile group rules")
+	if err := syncAllRecipients(cfg); err != nil {
+		return err
 	}
 	return ensureZFSKey(cfg, machine)
+}
+
+// requireMachinesProvisioned checks, without decrypting or writing anything,
+// that each machine has its keys and secrets file and that recipients are in
+// sync.
+func requireMachinesProvisioned(cfg *Config, machines ...string) error {
+	if err := ensureSopsConf(cfg); err != nil {
+		return err
+	}
+	for _, machine := range machines {
+		var missing []string
+		for _, path := range []string{
+			vars.MachineHostKeyPath(cfg.FlakeDir, machine),
+			vars.MachineHostKeyPubPath(cfg.FlakeDir, machine),
+			vars.MachineInitrdKeyPath(cfg.FlakeDir, machine),
+			vars.MachineInitrdKeyPubPath(cfg.FlakeDir, machine),
+			vars.MachineSecretsPath(cfg.FlakeDir, machine),
+		} {
+			if !fileExists(path) {
+				missing = append(missing, relToFlake(cfg, path))
+			}
+		}
+		if len(missing) > 0 {
+			return errors.Errorf("machine %s is not provisioned (missing %s); run 'deploy machine provision %s'",
+				machine, strings.Join(missing, ", "), machine)
+		}
+	}
+	return requireRecipientsInSync(cfg)
+}
+
+func machineProvisionCmd() *cli.Command {
+	return &cli.Command{
+		Name:      "provision",
+		Usage:     "create missing host/initrd keys, secrets file and ZFS root keys, then sync recipients",
+		ArgsUsage: "<machine|group...>",
+		BashComplete: func(ctx *cli.Context) {
+			cfg := completionConfig(ctx)
+			for _, name := range completionMachineOrGroupNames(cfg) {
+				fmt.Fprintln(ctx.App.Writer, name)
+			}
+		},
+		Action: func(ctx *cli.Context) error {
+			if ctx.NArg() < 1 {
+				return errors.New("usage: machine provision <machine|group...>")
+			}
+			cfg := getConfig(ctx)
+			machines, err := resolveTargetMachines(cfg, ctx.Args().Slice())
+			if err != nil {
+				return err
+			}
+			for _, machine := range machines {
+				if err := provisionMachine(cfg, machine); err != nil {
+					return errors.Wrapf(err, "provision %s", machine)
+				}
+			}
+			return nil
+		},
+	}
 }
 
 // ensureZFSKey generates and stores a ZFS root key for every encrypted pool
@@ -1074,28 +1139,47 @@ func ensureZFSKey(cfg *Config, machine string) error {
 	if err != nil {
 		return err
 	}
+	names := make([]string, 0, len(pools))
 	for pool := range pools {
-		if err := ensureZFSPoolKey(cfg, machine, pool); err != nil {
-			return err
-		}
+		names = append(names, pool)
 	}
-	return nil
+	sort.Strings(names)
+	return ensureZFSPoolKeys(vars.MachineSecretsPath(cfg.FlakeDir, machine), machine, names)
 }
 
-func ensureZFSPoolKey(cfg *Config, machine, pool string) error {
-	secretKey := pool + "-root-key"
-	path := vars.MachineSecretsPath(cfg.FlakeDir, machine)
-	if _, err := sops.DecryptYAMLExtract(path, secretKey); err == nil {
-		log.Debug().Str("machine", machine).Str("pool", pool).Msg("ZFS key already present")
+// ensureZFSPoolKeys creates missing root keys for pools in a single
+// decrypt/encrypt cycle. Existing keys are never replaced, and a decryption
+// failure aborts without writing.
+func ensureZFSPoolKeys(path, machine string, pools []string) error {
+	if len(pools) == 0 {
 		return nil
 	}
+	return sops.Edit(path, func(f *sops.File) error {
+		for _, pool := range pools {
+			created, err := f.SetIfAbsent(zfsRootKeyName(pool), generateZFSKey)
+			if err != nil {
+				return errors.Wrapf(err, "ensure ZFS root key of pool %s for %s", pool, machine)
+			}
+			if created {
+				log.Info().Str("machine", machine).Str("pool", pool).Msg("wrote new ZFS root key")
+			} else {
+				log.Debug().Str("machine", machine).Str("pool", pool).Msg("ZFS key already present")
+			}
+		}
+		return nil
+	})
+}
+
+func zfsRootKeyName(pool string) string {
+	return pool + "-root-key"
+}
+
+func generateZFSKey() (string, error) {
 	keyBytes := make([]byte, 32)
 	if _, err := rand.Read(keyBytes); err != nil {
-		return errors.Wrap(err, "generate ZFS key")
+		return "", errors.Wrap(err, "generate ZFS key")
 	}
-	key := hex.EncodeToString(keyBytes)
-	log.Info().Str("machine", machine).Str("pool", pool).Msg("writing ZFS root key")
-	return sops.SetYAML(path, secretKey, key)
+	return hex.EncodeToString(keyBytes), nil
 }
 
 func prepareInitrdKeys(cfg *Config, machine, extraDir string) error {
@@ -1118,7 +1202,7 @@ func prepareInitrdKeys(cfg *Config, machine, extraDir string) error {
 			return errors.Errorf("missing initrd SSH key for %s: %s", hostKeyPath, localSecret)
 		}
 		log.Debug().Str("key", hostKeyPath).Msg("decrypting initrd host key")
-		privPEM, err := sops.DecryptBinary(localSecret)
+		privPEM, err := sops.ReadFile(localSecret)
 		if err != nil {
 			return errors.Wrapf(err, "decrypt initrd key %s", localSecret)
 		}
@@ -1161,7 +1245,7 @@ func uploadOpenSSHHostKey(cfg *Config, machine, targetHost string, sshArgs []str
 	}
 
 	log.Info().Str("path", hostKeyPath).Msg("remote ssh host key differs or is missing, decrypting local key")
-	privPEM, err := sops.DecryptBinary(localSecret)
+	privPEM, err := sops.ReadFile(localSecret)
 	if err != nil {
 		return errors.Wrapf(err, "decrypt ssh host key %s", localSecret)
 	}
@@ -1211,7 +1295,7 @@ func uploadInitrdKeys(cfg *Config, machine, targetHost string, sshArgs []string,
 		}
 
 		log.Info().Str("path", hostKeyPath).Msg("remote initrd host key differs or is missing, decrypting local key")
-		privPEM, err := sops.DecryptBinary(localSecret)
+		privPEM, err := sops.ReadFile(localSecret)
 		if err != nil {
 			return errors.Wrapf(err, "decrypt initrd key %s", localSecret)
 		}

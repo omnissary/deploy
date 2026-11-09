@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -47,5 +48,27 @@ func TestRequireMachineAcceptsExistingMachineConfig(t *testing.T) {
 	}
 	if machine != "pegasus" {
 		t.Fatalf("unexpected machine %q", machine)
+	}
+}
+
+func TestRequireMachineNameRejectsReservedAndInvalidNames(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"shared", "", "../x", "Web"} {
+		if _, err := requireMachineName(name); err == nil {
+			t.Errorf("accepted %q", name)
+		}
+	}
+	for _, name := range []string{"web", "shared-1", "sharedx"} {
+		if got, err := requireMachineName(name); err != nil || got != name {
+			t.Errorf("rejected %q: %v", name, err)
+		}
+	}
+}
+
+func TestResolveSecretTargetRejectsReservedMachineName(t *testing.T) {
+	t.Parallel()
+	cfg := &Config{FlakeDir: t.TempDir(), HostsFile: filepath.Join(t.TempDir(), "hosts.yaml")}
+	if _, err := resolveSecretTarget(cfg, "shared"); err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("expected reserved-name error, got %v", err)
 	}
 }

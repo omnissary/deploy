@@ -7,13 +7,25 @@ import (
 
 const (
 	segSecrets  = "vars/secrets"
-	segShared   = "shared"
+	segShared   = SharedDirName
 	segOpenSSH  = "openssh"
 	segInitrd   = "initrd-ssh"
 	segAdmin    = "vars/admin"
 	fileHostKey = "ssh_host_ed25519_key"
 	fileInitKey = "id_ed25519"
 )
+
+// SharedDirName is the directory holding group secrets under vars/secrets; it
+// cannot be used as a machine name.
+const SharedDirName = "shared"
+
+var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+// ValidName reports whether s can be used as a machine, group or session key
+// name. Such names are safe both as path components and inside path regexes.
+func ValidName(s string) bool {
+	return namePattern.MatchString(s)
+}
 
 // Regex constants for SOPS creation rules.
 const (
@@ -110,4 +122,22 @@ func MachineFiles(flakeDir, machine string) []string {
 		MachineHostKeyPath(flakeDir, machine),
 		MachineInitrdKeyPath(flakeDir, machine),
 	}
+}
+
+func SessionKeyPath(flakeDir, name string) string {
+	return filepath.Join(AdminDir(flakeDir), name+"-age-key")
+}
+
+func SessionKeyPubPath(flakeDir, name string) string {
+	return SessionKeyPath(flakeDir, name) + ".pub"
+}
+
+func MachineHostKeyPubGlob(flakeDir string) string {
+	return MachineHostKeyGlob(flakeDir) + ".pub"
+}
+
+// MachineFromHostKeyPubPath returns the machine name of a path produced by
+// MachineHostKeyPubGlob.
+func MachineFromHostKeyPubPath(path string) string {
+	return filepath.Base(filepath.Dir(filepath.Dir(path)))
 }

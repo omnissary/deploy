@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 
 	"git.tatikoma.dev/corpix/atlas/errors"
+
+	"git.tatikoma.dev/corpix/deploy/internal/atomicfile"
 )
 
 // TargetVersion is the schema version produced by the current deploy binary.
@@ -56,13 +58,5 @@ func Save(flakeDir string, s *State) error {
 		return errors.Wrap(err, "marshal state")
 	}
 	data = append(data, '\n')
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return errors.Wrapf(err, "write %s", tmp)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return errors.Wrapf(err, "rename %s", path)
-	}
-	return nil
+	return atomicfile.Write(path, data, 0o644)
 }
