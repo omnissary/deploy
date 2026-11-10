@@ -3,7 +3,7 @@ let
   inherit (pkgs) lib runCommand;
   inherit (lib) assertMsg runTests;
   inherit (builtins) toJSON;
-  resolve = import ../internal/manifest/resolve.nix;
+  resolve = import ../nix/resolve.nix;
   platform = {
     nixpkgs.hostPlatform.system = "x86_64-linux";
     system.build = { };

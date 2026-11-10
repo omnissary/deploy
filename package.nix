@@ -27,6 +27,8 @@ let
         ./go.sum
         ./cmd
         ./internal
+        ./nix/manifest.go
+        ./nix/resolve.nix
         ./vendor
       ]);
     };

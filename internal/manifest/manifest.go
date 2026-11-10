@@ -2,16 +2,15 @@
 package manifest
 
 import (
-	_ "embed"
 	"encoding/json"
 	"path/filepath"
 	"strings"
 
 	"git.tatikoma.dev/corpix/atlas/errors"
+	"git.tatikoma.dev/corpix/deploy/nix"
 )
 
-//go:embed resolve.nix
-var Expression string
+var Expression = nix.ManifestExpression
 
 const Version = 1
 
