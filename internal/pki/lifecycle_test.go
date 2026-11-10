@@ -2,11 +2,13 @@ package pki
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/json"
 	"encoding/pem"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -328,6 +330,59 @@ func TestExplicitImportPreservesCertificateAndKey(t *testing.T) {
 	value, _ := file.Get("client-cert")
 	if strings.Count(value, "BEGIN CERTIFICATE") != 2 {
 		t.Fatal("chain duplicated or truncated")
+	}
+}
+
+func TestImportAcceptsHistoricalSerialReuse(t *testing.T) {
+	s := fixture(t)
+	s.Create("root", manifest.Authority{})
+	state, err := s.Load("root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, err := ParseCert(state.Generations[0].Certificate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ParseKey(state.Generations[0].Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	external := func(subject string) (string, string) {
+		key, err := newKey("p256")
+		if err != nil {
+			t.Fatal(err)
+		}
+		template := &x509.Certificate{
+			SerialNumber: big.NewInt(1),
+			Subject:      pkix.Name{CommonName: subject},
+			NotBefore:    s.now().Add(-time.Hour),
+			NotAfter:     s.now().Add(24 * time.Hour),
+			ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		}
+		der, err := x509.CreateCertificate(rand.Reader, template, ca, key.Public(), signer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		private, err := keyPEM(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return certPEM(der), private
+	}
+	for _, id := range []string{"one", "two"} {
+		cert, key := external(id)
+		if _, err := s.ImportCertificate(id, leaf(), cert, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state, err = s.Load("root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Records[1].Imported = false
+	if err := validateSerials(state); err == nil {
+		t.Fatal("accepted serial reuse by an issued certificate")
 	}
 }
 

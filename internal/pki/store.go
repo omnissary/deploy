@@ -42,6 +42,7 @@ type Record struct {
 	Generation  int                  `json:"generation"`
 	Reason      int                  `json:"reason,omitempty"`
 	External    bool                 `json:"external,omitempty"`
+	Imported    bool                 `json:"imported,omitempty"`
 }
 type Publication struct {
 	Values map[string]string `json:"values"`
@@ -320,18 +321,22 @@ func generation(state *State, id int) (*Generation, error) {
 }
 
 func validateSerials(state *State) error {
-	seen := map[string]string{}
+	type issued struct {
+		fingerprint string
+		imported    bool
+	}
+	seen := map[string]issued{}
 	for _, record := range state.Records {
 		cert, err := ParseCert(record.Certificate)
 		if err != nil {
 			return err
 		}
 		key := fmt.Sprintf("%d:%s", record.Generation, cert.SerialNumber.Text(16))
-		fp := fingerprint(cert)
-		if previous, ok := seen[key]; ok && previous != fp {
+		current := issued{fingerprint: fingerprint(cert), imported: record.Imported}
+		if previous, ok := seen[key]; ok && previous.fingerprint != current.fingerprint && !(previous.imported && current.imported) {
 			return errors.New("issuer reused a certificate serial")
 		}
-		seen[key] = fp
+		seen[key] = current
 	}
 	return nil
 }

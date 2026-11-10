@@ -320,6 +320,7 @@ func (s Store) ImportCertificate(id string, spec manifest.Certificate, certifica
 		Key:         private,
 		Spec:        spec,
 		External:    private == "",
+		Imported:    true,
 	}
 	state.Records = append(state.Records, r)
 	if private != "" {
