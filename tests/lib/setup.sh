@@ -10,9 +10,8 @@ chmod 700 "$GNUPGHOME"
 # shellcheck source=keys.sh
 source "$(dirname "${BASH_SOURCE[0]}")/keys.sh"
 fingerprint=$(import_pgp_identity "$TEST_IDENTITY")
-deploy --flake "$TEST_REPO" init --admin-pgp "$fingerprint"
-
-deploy_in_repo() { deploy --flake "$TEST_REPO" "$@"; }
+deploy() { command deploy --flake "$TEST_REPO" "$@"; }
+deploy init --admin-pgp "$fingerprint"
 
 expect_failure() {
   local label=$1
