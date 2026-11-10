@@ -128,3 +128,21 @@ func TestListAdminKeysRequiresGenericRule(t *testing.T) {
 		t.Fatal("expected error without generic rule")
 	}
 }
+
+func TestEncryptedInventoryIncludesNestedAdminState(t *testing.T) {
+	dir := t.TempDir()
+	folder := filepath.Join(dir, "vars", "admin", "pki")
+	if err := os.MkdirAll(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(folder, "root.yaml")
+	os.WriteFile(secret, []byte("fixture"), 0o600)
+	os.WriteFile(secret+".pub", []byte("public"), 0o644)
+	files, err := ListEncryptedFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0] != secret {
+		t.Fatalf("nested admin inventory: %v", files)
+	}
+}

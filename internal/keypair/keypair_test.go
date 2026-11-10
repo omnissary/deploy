@@ -203,7 +203,9 @@ func TestEnsureRejectsInconsistentGeneratedPair(t *testing.T) {
 	fl := sopstest.NewFlake(t)
 	var r recorder
 	s := newSpec(t, fl, &r)
-	s.Generate = func() ([]byte, []byte, error) { return []byte("PRIVATE-1"), []byte("pub:OTHER\n"), nil }
+	s.Generate = func() ([]byte, []byte, error) {
+		return []byte("PRIVATE-1"), []byte("pub:OTHER\n"), nil
+	}
 
 	if _, err := Ensure(fl.SopsConf, s); err == nil {
 		t.Fatal("expected mismatch error")

@@ -4,16 +4,36 @@ on:
   push:
     branches: [master]
   pull_request:
-    branches: [master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: nix
     steps:
-      - uses: actions/checkout@v4
+      - uses: https://git.tatikoma.dev/corpix/checkout-action@v3
+        with:
+          fetch-depth: 50
 
       - name: build
         run: nix build --print-build-logs
 
       - name: smoke test
         run: nix run . -- --help
+
+      - name: lint
+        run: nix develop .#devShells.x86_64-linux.default --command just lint
+
+      - name: check generated workflows
+        run: nix develop .#devShells.x86_64-linux.default --command just gen-check
+
+      - name: fast checks
+        run: nix develop .#devShells.x86_64-linux.default --command just test
+
+      - name: retain development shell
+        run: |
+          gcroot=$(echo ${{ github.repository }} | sed 's/\//-/g').nix-shell
+          target="/nix/var/nix/gcroots/per-user/$(whoami)/$gcroot"
+          nix build --out-link "$target" .#devShells.x86_64-linux.default

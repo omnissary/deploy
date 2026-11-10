@@ -10,16 +10,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
 
-	"git.tatikoma.dev/corpix/atlas/errors"
-	"git.tatikoma.dev/corpix/atlas/log"
 	"github.com/urfave/cli/v2"
 
+	"git.tatikoma.dev/corpix/atlas/errors"
+	"git.tatikoma.dev/corpix/atlas/log"
 	"git.tatikoma.dev/corpix/deploy/internal/hosts"
+	"git.tatikoma.dev/corpix/deploy/internal/installer"
+	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/nix"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
@@ -131,6 +134,7 @@ func machineCmd() *cli.Command {
 		},
 		Subcommands: []*cli.Command{
 			machineInitCmd(),
+			machineInspectCmd(),
 			machineProvisionCmd(),
 			machineBuildCmd(),
 			machineEvalCmd(),
@@ -148,6 +152,11 @@ func machineInitCmd() *cli.Command {
 		Usage:     "bootstrap a machine via nixos-anywhere (kexec -> disko -> install -> reboot)",
 		ArgsUsage: "<machine> <host>",
 		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "backend", Usage: "installation backend: nixos-anywhere or executable"},
+			&cli.BoolFlag{
+				Name:  "build-only",
+				Usage: "build declared installation artifacts without provisioning or running the installer",
+			},
 			&cli.IntFlag{
 				Name:  "port",
 				Usage: "SSH port on the target",
@@ -172,14 +181,48 @@ func machineInitCmd() *cli.Command {
 				Usage: "extra SSH option to prepend to nixos-anywhere SSH calls; can be repeated",
 			},
 		},
-		Action: func(ctx *cli.Context) error {
-			if ctx.NArg() < 2 {
-				return errors.New("usage: machine init <machine> <host>")
+		Action: repositoryMutation(func(ctx *cli.Context) error {
+			if ctx.NArg() < 1 {
+				return errors.New("usage: machine init <machine> [host]")
 			}
 			cfg := getConfig(ctx)
 			machine, err := requireMachine(cfg, ctx.Args().Get(0))
 			if err != nil {
 				return err
+			}
+			meta, err := machineMetadata(cfg, machine)
+			if err != nil {
+				return err
+			}
+			backend := ctx.String("backend")
+			if backend == "" {
+				backend = meta.Installer.Backend
+			}
+			meta.Installer.Backend = backend
+			if err := validateInstaller(meta, backend); err != nil {
+				return err
+			}
+			if ctx.Bool("build-only") {
+				if err := requireMachinesProvisioned(cfg, machine); err != nil {
+					return err
+				}
+				return buildInstallArtifacts(ctx, cfg, machine, meta)
+			}
+			handler, err := installationBackends.Resolve(backend)
+			if err != nil {
+				return err
+			}
+			if handler.SecretDelivery() == "out-of-band" {
+				return executableInstall(ctx, cfg, machine, meta)
+			}
+			if ctx.NArg() != 2 {
+				return errors.New("nixos-anywhere requires <machine> <host>")
+			}
+			if !cfg.SystemExplicit && meta.System == "" {
+				return errors.New("cannot resolve target architecture; supply --system")
+			}
+			if !cfg.SystemExplicit && meta.System != "" {
+				cfg.System = meta.System
 			}
 			host := ctx.Args().Get(1)
 			port := ctx.Int("port")
@@ -187,8 +230,11 @@ func machineInitCmd() *cli.Command {
 			sshOptions := ctx.StringSlice("ssh-option")
 
 			kexecTarball := ctx.Path("kexec")
-			if kexecTarball == "" {
+			if kexecTarball == "" && slices.Contains(strings.Split(phases, ","), "kexec") {
 				flavor := ctx.String("kexec-flavor")
+				if !ctx.IsSet("kexec-flavor") && meta.RootFS != "zfs" && len(meta.Pools) == 0 {
+					flavor = "ext4"
+				}
 				log.Info().Str("flavor", flavor).Msg("no --kexec provided, building from images flake")
 				kexecTarball, err = buildKexecTarball(cfg.ImagesFlake, cfg.System, flavor)
 				if err != nil {
@@ -251,10 +297,12 @@ func machineInitCmd() *cli.Command {
 			args = append(args,
 				"--phases", phases,
 				"--post-kexec-ssh-port", "22",
-				"--kexec", kexecTarball,
 				"--no-substitute-on-destination",
 				"--extra-files", extra,
 			)
+			if kexecTarball != "" {
+				args = append(args, "--kexec", kexecTarball)
+			}
 			for remotePath, localFile := range zfsKeyFiles {
 				args = append(args, "--disk-encryption-keys", remotePath, localFile)
 			}
@@ -266,7 +314,11 @@ func machineInitCmd() *cli.Command {
 
 			wc := writerConfig{}
 			log.Info().Str("machine", machine).Str("host", host).Int("port", port).Msg("running NixOS Anywhere")
-			cmd := exec.Command("nixos-anywhere", args...)
+			invocation, err := handler.Command(installer.Prepared{Arguments: args})
+			if err != nil {
+				return err
+			}
+			cmd := exec.CommandContext(ctx.Context, invocation.Program, invocation.Arguments...)
 			cmd.Env = append(os.Environ(), "HOME="+cfg.FlakeDir)
 			cmd.Stdin = os.Stdin
 			cmd.Stdout = wc.stdout()
@@ -275,12 +327,19 @@ func machineInitCmd() *cli.Command {
 				return errors.Wrap(err, "nixos-anywhere")
 			}
 
-			if err := hosts.SetAddress(cfg.HostsFile, machine, "", host); err != nil {
-				return errors.Wrapf(err, "register host for %s", machine)
+			if meta.YggdrasilAddressTag != "default" && meta.Addresses["default"] == "" {
+				if err := hosts.SetAddress(cfg.HostsFile, machine, "", host); err != nil {
+					return err
+				}
+			}
+			if meta.Addresses["unlock"] == "" {
+				if err := hosts.SetAddress(cfg.HostsFile, machine, "unlock", host); err != nil {
+					return err
+				}
 			}
 			log.Info().Str("machine", machine).Str("host", host).Msg("machine initialised")
 			return nil
-		},
+		}),
 	}
 }
 
@@ -321,9 +380,9 @@ func machineBuildCmd() *cli.Command {
 			usePrefix := len(machines) > 1
 
 			type buildResult struct {
+				err     error
 				machine string
 				path    string
-				err     error
 			}
 
 			sem := make(chan struct{}, parallelism)
@@ -447,9 +506,13 @@ func machineAuditCmd() *cli.Command {
 				return err
 			}
 
-			attrs := map[string]string{
-				"diskoScript": cfg.MachineAttr(machine, "config.system.build.diskoScript"),
-				"toplevel":    cfg.MachineAttr(machine, "config.system.build.toplevel"),
+			meta, err := machineMetadata(cfg, machine)
+			if err != nil {
+				return err
+			}
+			attrs := map[string]string{"toplevel": cfg.MachineAttr(machine, "config.system.build.toplevel")}
+			if meta.Disko {
+				attrs["diskoScript"] = cfg.MachineAttr(machine, "config.system.build.diskoScript")
 			}
 
 			leakFound := false
@@ -508,7 +571,7 @@ func machineDeployCmd() *cli.Command {
 				fmt.Println(name)
 			}
 		},
-		Action: func(ctx *cli.Context) error {
+		Action: repositoryMutation(func(ctx *cli.Context) error {
 			if ctx.NArg() < 1 {
 				return errors.New("usage: machine deploy <machine|group...>")
 			}
@@ -535,8 +598,14 @@ func machineDeployCmd() *cli.Command {
 			hostFor := make(map[string]string, len(machines))
 			for _, machine := range machines {
 				if hostOverride != "" {
-					if err := hosts.SetAddress(cfg.HostsFile, machine, "", hostOverride); err != nil {
-						return errors.Wrapf(err, "register host for %s", machine)
+					meta, err := machineMetadata(cfg, machine)
+					if err != nil {
+						return err
+					}
+					if meta.YggdrasilAddressTag != "default" && meta.Addresses["default"] == "" {
+						if err := hosts.SetAddress(cfg.HostsFile, machine, "", hostOverride); err != nil {
+							return errors.Wrapf(err, "register host for %s", machine)
+						}
 					}
 					hostFor[machine] = hostOverride
 				} else {
@@ -593,7 +662,7 @@ func machineDeployCmd() *cli.Command {
 				msgs[i] = e.Error()
 			}
 			return errors.New(strings.Join(msgs, "\n"))
-		},
+		}),
 	}
 }
 
@@ -782,7 +851,17 @@ func machineUnlockZFSCmd() *cli.Command {
 				return err
 			}
 
-			initrdPort := ctx.Int("initrd-port")
+			meta, err := machineMetadata(cfg, machine)
+			if err != nil {
+				return err
+			}
+			initrdPort := meta.InitrdPort
+			if ctx.IsSet("initrd-port") || initrdPort == 0 {
+				initrdPort = ctx.Int("initrd-port")
+			}
+			if !meta.InitrdSSH {
+				return errors.New("machine has no managed initrd SSH capability")
+			}
 
 			host, err := hosts.GetAddress(cfg.HostsFile, machine, "unlock")
 			if err != nil {
@@ -792,6 +871,17 @@ func machineUnlockZFSCmd() *cli.Command {
 				return errors.Errorf("no host registered for %s; run machine init first", machine)
 			}
 
+			if meta.Unlock == "luks" {
+				args := append(cfg.SSHArgs(), "-t", "-p", fmt.Sprint(initrdPort), cfg.SSHTarget(host), "unlock")
+				command := exec.Command("ssh", args...)
+				command.Stdin = os.Stdin
+				command.Stdout = os.Stdout
+				command.Stderr = os.Stderr
+				return command.Run()
+			}
+			if meta.Unlock != "zfs" {
+				return errors.New("no supported unlock capability declared")
+			}
 			log.Info().Str("machine", machine).Str("host", host).Int("port", initrdPort).Msg("unlocking ZFS")
 
 			pools, err := encryptedZFSPools(cfg, machine)
@@ -799,8 +889,7 @@ func machineUnlockZFSCmd() *cli.Command {
 				return err
 			}
 			if len(pools) == 0 {
-				log.Error().Str("machine", machine).Msg("no encrypted ZFS pools found (no disko or zfs-crypt configuration found)")
-				return nil
+				return errors.New("no encrypted ZFS pools declared")
 			}
 
 			secrets, err := sops.Open(vars.MachineSecretsPath(cfg.FlakeDir, machine))
@@ -809,20 +898,23 @@ func machineUnlockZFSCmd() *cli.Command {
 			}
 			wc := writerConfig{}
 			for pool, remotePath := range pools {
-				key, err := secrets.Get(zfsRootKeyName(pool))
+				poolSpec := meta.Pools[pool]
+				secretName := poolSpec.Secret
+				if secretName == "" {
+					secretName = zfsRootKeyName(pool)
+				}
+				key, err := secrets.Get(secretName)
 				if err != nil {
 					return errors.Wrapf(err, "read ZFS root key of pool %s for %s", pool, machine)
 				}
-				remoteCmd := fmt.Sprintf(
-					"mkdir -p '%s' && cat > '%s.tmp' && mv '%s.tmp' '%s'",
-					filepath.Dir(remotePath),
-					remotePath,
-					remotePath,
-					remotePath,
-				)
+				remoteCmd := fmt.Sprintf("mkdir -p -- %s && umask 077 && cat > %s && mv -- %s %s", shellArg(filepath.Dir(remotePath)), shellArg(remotePath+".tmp"), shellArg(remotePath+".tmp"), shellArg(remotePath))
 				sshArgs := append(cfg.SSHArgs(), "-p", fmt.Sprintf("%d", initrdPort), cfg.SSHTarget(host), remoteCmd)
 				cmd := exec.Command("ssh", sshArgs...)
-				cmd.Stdin = strings.NewReader(key)
+				keyBytes, err := manifest.StorageKeyBytes(poolSpec, key)
+				if err != nil {
+					return err
+				}
+				cmd.Stdin = bytes.NewReader(keyBytes)
 				cmd.Stdout = wc.stdout()
 				cmd.Stderr = wc.stderr()
 				if err := cmd.Run(); err != nil {
@@ -966,61 +1058,37 @@ func terminateSSHControlMaster(pid int, masterErrCh <-chan error, signal syscall
 // config.modules.zfs-crypt.pools. Disko rootFsOptions are used as a fallback for
 // machines that declare their encrypted pools through config.disko.devices.zpool.
 func encryptedZFSPools(cfg *Config, machine string) (map[string]string, error) {
-	raw, err := nix.EvalApply(cfg.FlakeDir, cfg.MachineAttr(machine, "config"), `
-		cfg:
-		let
-		  hasZfsCrypt =
-		    cfg ? modules
-		    && cfg.modules ? zfs-crypt
-		    && cfg.modules.zfs-crypt.enable;
-		  zfsCryptPools =
-		    if hasZfsCrypt
-		    then builtins.mapAttrs (_: p: p.keyPath) cfg.modules.zfs-crypt.pools
-		    else {};
-
-		  hasDisko =
-		    cfg ? disko
-		    && cfg.disko ? devices
-		    && cfg.disko.devices ? zpool;
-		  diskoPools =
-		    if hasDisko
-		    then builtins.listToAttrs (builtins.filter (entry: entry != null) (
-		      builtins.attrValues (builtins.mapAttrs (name: p:
-		        let
-		          opts = p.rootFsOptions or {};
-		          keyformat = opts.keyformat or "";
-		          keylocation = opts.keylocation or "";
-		        in
-		          if keyformat != "" && keyformat != "none" && builtins.substring 0 7 keylocation == "file://"
-		          then {
-		            inherit name;
-		            value = builtins.substring 7 (builtins.stringLength keylocation - 7) keylocation;
-		          }
-		          else null
-		      ) cfg.disko.devices.zpool)
-		    ))
-		    else {};
-		in
-		  diskoPools // zfsCryptPools
-	`)
+	meta, err := machineMetadata(cfg, machine)
 	if err != nil {
-		return nil, errors.Wrapf(err, "eval encrypted ZFS pool config for %s", machine)
+		return nil, err
 	}
-	var pools map[string]string
-	if err := json.Unmarshal(raw, &pools); err != nil {
-		return nil, errors.Wrapf(err, "parse encrypted ZFS pool config for %s", machine)
+	result := map[string]string{}
+	for name, pool := range meta.Pools {
+		result[name] = pool.KeyPath
 	}
-	return pools, nil
+	return result, nil
 }
 
 // decryptZFSKeys decrypts the ZFS root key for every encrypted pool and writes
 // each into a temp file. Returns a map of remote path → local tmpfile path.
 func decryptZFSKeys(cfg *Config, machine string) (map[string]string, error) {
+	meta, err := machineMetadata(cfg, machine)
+	if err != nil {
+		return nil, err
+	}
 	pools, err := encryptedZFSPools(cfg, machine)
 	if err != nil {
 		return nil, err
 	}
 	result := make(map[string]string, len(pools))
+	complete := false
+	defer func() {
+		if !complete {
+			for _, path := range result {
+				_ = os.Remove(path)
+			}
+		}
+	}()
 	if len(pools) == 0 {
 		return result, nil
 	}
@@ -1030,7 +1098,12 @@ func decryptZFSKeys(cfg *Config, machine string) (map[string]string, error) {
 	}
 	for pool, remotePath := range pools {
 		log.Debug().Str("machine", machine).Str("pool", pool).Msg("decrypting ZFS root key")
-		key, err := secrets.Get(zfsRootKeyName(pool))
+		poolSpec := meta.Pools[pool]
+		secretName := poolSpec.Secret
+		if secretName == "" {
+			secretName = zfsRootKeyName(pool)
+		}
+		key, err := secrets.Get(secretName)
 		if err != nil {
 			return nil, errors.Wrapf(err, "read ZFS root key of pool %s for %s", pool, machine)
 		}
@@ -1038,7 +1111,14 @@ func decryptZFSKeys(cfg *Config, machine string) (map[string]string, error) {
 		if err != nil {
 			return nil, errors.Wrap(err, "create zfs key tmpfile")
 		}
-		if _, err := fmt.Fprint(f, key); err != nil {
+		keyBytes, err := manifest.StorageKeyBytes(poolSpec, key)
+		if err != nil {
+			_ = f.Close()
+			_ = os.Remove(f.Name())
+			return nil, err
+		}
+		result[remotePath] = f.Name()
+		if _, err := f.Write(keyBytes); err != nil {
 			_ = f.Close()
 			return nil, errors.Wrap(err, "write zfs key")
 		}
@@ -1050,28 +1130,40 @@ func decryptZFSKeys(cfg *Config, machine string) (map[string]string, error) {
 		}
 		result[remotePath] = f.Name()
 	}
+	complete = true
 	return result, nil
 }
 
 // provisionMachine idempotently creates every key and secrets file a machine
 // needs and syncs recipients. It never replaces existing keys.
 func provisionMachine(cfg *Config, machine string) error {
+	meta, err := machineMetadata(cfg, machine)
+	if err != nil {
+		return err
+	}
 	if err := ensureSopsConf(cfg); err != nil {
 		return err
 	}
-	if err := ensureHostKey(cfg, machine); err != nil {
-		return err
+	if meta.HostKey {
+		if err := ensureHostKey(cfg, machine); err != nil {
+			return err
+		}
 	}
-	if err := ensureInitrdKey(cfg, machine); err != nil {
-		return err
+	if meta.InitrdSSH {
+		if err := ensureInitrdKey(cfg, machine); err != nil {
+			return err
+		}
 	}
-	if err := ensureSecrets(cfg, machine); err != nil {
+	if err := createEncryptedYAMLIfMissing(cfg, vars.MachineSecretsPath(cfg.FlakeDir, machine), "machine", machine); err != nil {
 		return err
 	}
 	if err := syncAllRecipients(cfg); err != nil {
 		return err
 	}
-	return ensureZFSKey(cfg, machine)
+	if err := ensureZFSKey(cfg, machine); err != nil {
+		return err
+	}
+	return provisionApplicationResources(cfg, machine, meta)
 }
 
 // requireMachinesProvisioned checks, without decrypting or writing anything,
@@ -1083,16 +1175,24 @@ func requireMachinesProvisioned(cfg *Config, machines ...string) error {
 	}
 	for _, machine := range machines {
 		var missing []string
-		for _, path := range []string{
-			vars.MachineHostKeyPath(cfg.FlakeDir, machine),
-			vars.MachineHostKeyPubPath(cfg.FlakeDir, machine),
-			vars.MachineInitrdKeyPath(cfg.FlakeDir, machine),
-			vars.MachineInitrdKeyPubPath(cfg.FlakeDir, machine),
-			vars.MachineSecretsPath(cfg.FlakeDir, machine),
-		} {
+		meta, err := machineMetadata(cfg, machine)
+		if err != nil {
+			return err
+		}
+		paths := []string{vars.MachineSecretsPath(cfg.FlakeDir, machine)}
+		if meta.HostKey {
+			paths = append(paths, vars.MachineHostKeyPath(cfg.FlakeDir, machine), vars.MachineHostKeyPubPath(cfg.FlakeDir, machine))
+		}
+		if meta.InitrdSSH {
+			paths = append(paths, vars.MachineInitrdKeyPath(cfg.FlakeDir, machine), vars.MachineInitrdKeyPubPath(cfg.FlakeDir, machine))
+		}
+		for _, path := range paths {
 			if !fileExists(path) {
 				missing = append(missing, relToFlake(cfg, path))
 			}
+		}
+		if err := requireApplicationResources(cfg, machine, meta); err != nil {
+			return err
 		}
 		if len(missing) > 0 {
 			return errors.Errorf("machine %s is not provisioned (missing %s); run 'deploy machine provision %s'",
@@ -1113,7 +1213,7 @@ func machineProvisionCmd() *cli.Command {
 				fmt.Fprintln(ctx.App.Writer, name)
 			}
 		},
-		Action: func(ctx *cli.Context) error {
+		Action: repositoryMutation(func(ctx *cli.Context) error {
 			if ctx.NArg() < 1 {
 				return errors.New("usage: machine provision <machine|group...>")
 			}
@@ -1128,23 +1228,46 @@ func machineProvisionCmd() *cli.Command {
 				}
 			}
 			return nil
-		},
+		}),
 	}
 }
 
 // ensureZFSKey generates and stores a ZFS root key for every encrypted pool
 // that doesn't already have one in secrets.yaml.
 func ensureZFSKey(cfg *Config, machine string) error {
-	pools, err := encryptedZFSPools(cfg, machine)
+	meta, err := machineMetadata(cfg, machine)
 	if err != nil {
 		return err
 	}
-	names := make([]string, 0, len(pools))
-	for pool := range pools {
-		names = append(names, pool)
+	if len(meta.Pools) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(meta.Pools))
+	for name := range meta.Pools {
+		names = append(names, name)
 	}
 	sort.Strings(names)
-	return ensureZFSPoolKeys(vars.MachineSecretsPath(cfg.FlakeDir, machine), machine, names)
+	return sops.Edit(vars.MachineSecretsPath(cfg.FlakeDir, machine), func(file *sops.File) error {
+		for _, name := range names {
+			pool := meta.Pools[name]
+			if pool.Secret == "" {
+				pool.Secret = zfsRootKeyName(name)
+			}
+			if _, err := file.SetIfAbsent(pool.Secret, func() (string, error) {
+				return manifest.GenerateStorageKey(pool.Format)
+			}); err != nil {
+				return err
+			}
+			value, err := file.Get(pool.Secret)
+			if err != nil {
+				return err
+			}
+			if _, err := manifest.StorageKeyBytes(pool, value); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // ensureZFSPoolKeys creates missing root keys for pools in a single
@@ -1183,6 +1306,13 @@ func generateZFSKey() (string, error) {
 }
 
 func prepareInitrdKeys(cfg *Config, machine, extraDir string) error {
+	meta, err := machineMetadata(cfg, machine)
+	if err != nil {
+		return err
+	}
+	if !meta.InitrdSSH {
+		return nil
+	}
 	raw, err := nix.Eval(cfg.FlakeDir, cfg.MachineAttr(machine, "config.boot.initrd.network.ssh.hostKeys"))
 	if err != nil {
 		return errors.Wrapf(err, "eval initrd host keys for %s", machine)
@@ -1255,6 +1385,13 @@ func uploadOpenSSHHostKey(cfg *Config, machine, targetHost string, sshArgs []str
 }
 
 func uploadInitrdKeys(cfg *Config, machine, targetHost string, sshArgs []string, nixc *nix.Client, wc writerConfig) error {
+	meta, err := machineMetadata(cfg, machine)
+	if err != nil {
+		return err
+	}
+	if !meta.InitrdSSH {
+		return nil
+	}
 	raw, err := nixc.Eval(cfg.FlakeDir, cfg.MachineAttr(machine, "config.boot.initrd.network.ssh.hostKeys"))
 	if err != nil {
 		return errors.Wrapf(err, "eval initrd host keys for %s", machine)

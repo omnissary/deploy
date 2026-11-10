@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"git.tatikoma.dev/corpix/atlas/errors"
-	"git.tatikoma.dev/corpix/atlas/log"
 	"github.com/urfave/cli/v2"
 
+	"git.tatikoma.dev/corpix/atlas/errors"
+	"git.tatikoma.dev/corpix/atlas/log"
 	"git.tatikoma.dev/corpix/deploy/internal/agekey"
 	"git.tatikoma.dev/corpix/deploy/internal/atomicfile"
 	"git.tatikoma.dev/corpix/deploy/internal/keypair"
@@ -26,6 +26,7 @@ func keyCmd() *cli.Command {
 			return requireFlake(getConfig(ctx))
 		},
 		Subcommands: []*cli.Command{
+			yggdrasilCmd(),
 			{
 				Name:      "host",
 				Usage:     "ensure the openssh host key exists and is encrypted",
@@ -38,7 +39,7 @@ func keyCmd() *cli.Command {
 						}
 					}
 				},
-				Action: func(ctx *cli.Context) error {
+				Action: repositoryMutation(func(ctx *cli.Context) error {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: key host <machine>")
 					}
@@ -48,7 +49,7 @@ func keyCmd() *cli.Command {
 						return err
 					}
 					return ensureHostKey(cfg, machine)
-				},
+				}),
 			},
 			{
 				Name:      "initrd",
@@ -62,7 +63,7 @@ func keyCmd() *cli.Command {
 						}
 					}
 				},
-				Action: func(ctx *cli.Context) error {
+				Action: repositoryMutation(func(ctx *cli.Context) error {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: key initrd <machine>")
 					}
@@ -72,7 +73,7 @@ func keyCmd() *cli.Command {
 						return err
 					}
 					return ensureInitrdKey(cfg, machine)
-				},
+				}),
 			},
 			{
 				Name:      "ensure",
@@ -86,7 +87,7 @@ func keyCmd() *cli.Command {
 						}
 					}
 				},
-				Action: func(ctx *cli.Context) error {
+				Action: repositoryMutation(func(ctx *cli.Context) error {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: key ensure <machine>")
 					}
@@ -99,7 +100,7 @@ func keyCmd() *cli.Command {
 						return err
 					}
 					return ensureInitrdKey(cfg, machine)
-				},
+				}),
 			},
 			keyAdminCmd(),
 			keySessionCmd(),
@@ -141,7 +142,7 @@ func keyAdminCmd() *cli.Command {
 				Name:      "add",
 				Usage:     "add an admin PGP fingerprint to all creation rules",
 				ArgsUsage: "<fingerprint>",
-				Action: func(ctx *cli.Context) error {
+				Action: repositoryMutation(func(ctx *cli.Context) error {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: key admin add <fingerprint>")
 					}
@@ -160,13 +161,13 @@ func keyAdminCmd() *cli.Command {
 						log.Info().Str("fingerprint", fingerprint).Msg("admin key already present")
 					}
 					return nil
-				},
+				}),
 			},
 			{
 				Name:      "remove",
 				Usage:     "remove an admin PGP fingerprint from all creation rules",
 				ArgsUsage: "<fingerprint>",
-				Action: func(ctx *cli.Context) error {
+				Action: repositoryMutation(func(ctx *cli.Context) error {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: key admin remove <fingerprint>")
 					}
@@ -185,7 +186,7 @@ func keyAdminCmd() *cli.Command {
 						log.Info().Str("fingerprint", fingerprint).Msg("admin key not found")
 					}
 					return nil
-				},
+				}),
 			},
 		},
 	}
@@ -223,11 +224,11 @@ func keySessionCmd() *cli.Command {
 				Name:  "ensure",
 				Usage: "generate a session age key if it does not exist",
 				Flags: []cli.Flag{nameFlag},
-				Action: func(ctx *cli.Context) error {
+				Action: repositoryMutation(func(ctx *cli.Context) error {
 					cfg := getConfig(ctx)
 					name := ctx.String("name")
 					return ensureSessionKey(cfg, name)
-				},
+				}),
 			},
 			{
 				Name:  "unlock",
@@ -242,13 +243,13 @@ func keySessionCmd() *cli.Command {
 				Name:      "remove",
 				Usage:     "remove a session age key from .sops.yaml and delete its files",
 				ArgsUsage: "<name>",
-				Action: func(ctx *cli.Context) error {
+				Action: repositoryMutation(func(ctx *cli.Context) error {
 					if ctx.NArg() < 1 {
 						return errors.New("usage: key session remove <name>")
 					}
 					cfg := getConfig(ctx)
 					return removeSessionKey(cfg, ctx.Args().Get(0))
-				},
+				}),
 			},
 		},
 	}

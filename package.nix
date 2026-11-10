@@ -10,12 +10,27 @@
   nixos-anywhere,
 }:
 let
+  inherit (lib.fileset)
+    gitTracked
+    intersection
+    toSource
+    unions
+    ;
   unwrapped = buildGoModule {
     pname = "deploy-unwrapped";
-    version = "0.1.0";
-    src = lib.fileset.toSource {
+    version = "0.2.0";
+    src = toSource {
       root = ./.;
-      fileset = lib.fileset.gitTracked ./.;
+      fileset = intersection (gitTracked ./.) (unions [
+        ./main.go
+        ./go.mod
+        ./go.sum
+        ./cmd
+        ./internal
+        ./nix/manifest.go
+        ./nix/resolve.nix
+        ./vendor
+      ]);
     };
     vendorHash = null;
     meta.mainProgram = "deploy";

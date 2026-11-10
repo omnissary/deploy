@@ -2,9 +2,12 @@ package cmd
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"git.tatikoma.dev/corpix/deploy/internal/hosts"
+	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/sops/sopstest"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
 )
@@ -86,5 +89,105 @@ func TestRequireMachinesProvisionedRequiresSopsConf(t *testing.T) {
 	}
 	if err := requireMachinesProvisioned(af.cfg, "a"); err == nil {
 		t.Fatal("expected error without .sops.yaml")
+	}
+}
+
+func TestNoInitrdSSHKeysRequiredForDisabledCapability(t *testing.T) {
+	af := newAdminFlake(t)
+	provisionWithoutZFS(t, af.cfg, "chip")
+	af.cfg.machineInfo = func(string) (manifest.Machine, error) {
+		return manifest.Machine{HostKey: true}, nil
+	}
+	for _, p := range []string{vars.MachineInitrdKeyPath(af.cfg.FlakeDir, "chip"), vars.MachineInitrdKeyPubPath(af.cfg.FlakeDir, "chip")} {
+		if err := os.Remove(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := requireMachinesProvisioned(af.cfg, "chip"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProvisionDoesNotCreateDisabledInitrdSSHKeys(t *testing.T) {
+	af := newAdminFlake(t)
+	af.cfg.machineInfo = func(string) (manifest.Machine, error) {
+		return manifest.Machine{HostKey: true}, nil
+	}
+	if err := provisionMachine(af.cfg, "chip"); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{vars.MachineInitrdKeyPath(af.cfg.FlakeDir, "chip"), vars.MachineInitrdKeyPubPath(af.cfg.FlakeDir, "chip")} {
+		if fileExists(path) {
+			t.Fatalf("disabled initrd SSH key created: %s", path)
+		}
+	}
+	if !fileExists(vars.MachineHostKeyPath(af.cfg.FlakeDir, "chip")) {
+		t.Fatal("host key missing")
+	}
+}
+
+func TestProvisionDeclaredResourcesAndReadOnlyPrerequisites(t *testing.T) {
+	af := newAdminFlake(t)
+	meta := manifest.Machine{HostKey: true, Yggdrasil: true, Certificates: []string{"client"}}
+	af.cfg.machineInfo = func(string) (manifest.Machine, error) { return meta, nil }
+	spec := manifest.Certificate{
+		Issuer:  "root",
+		Subject: "client",
+		Usage:   []string{"clientAuth"},
+		Target:  manifest.Target{Name: "m", Cert: "cert", Key: "key", CA: "ca"},
+	}
+	af.cfg.manifestInfo = func() (manifest.Manifest, error) {
+		return manifest.Manifest{SchemaVersion: 1, Certificates: map[string]manifest.Certificate{"client": spec}}, nil
+	}
+	if _, err := pkiStore(af.cfg).Create("root", manifest.Authority{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := provisionMachine(af.cfg, "m"); err != nil {
+		t.Fatal(err)
+	}
+	if fileExists(vars.MachineInitrdKeyPath(af.cfg.FlakeDir, "m")) {
+		t.Fatal("board gained an initrd key")
+	}
+	before, err := os.ReadFile(vars.MachineSecretsPath(af.cfg.FlakeDir, "m"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := provisionMachine(af.cfg, "m"); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(vars.MachineSecretsPath(af.cfg.FlakeDir, "m"))
+	if string(before) != string(after) {
+		t.Fatal("idempotent provisioning changed credentials")
+	}
+	sopstest.UseIdentities(t)
+	if err := requireMachinesProvisioned(af.cfg, "m"); err != nil {
+		t.Fatalf("prerequisite check needed a decryption key: %v", err)
+	}
+}
+
+func TestProvisionRemovesOnlyPreviouslyManagedMemberships(t *testing.T) {
+	af := newAdminFlake(t)
+	af.cfg.HostsFile = filepath.Join(af.cfg.FlakeDir, "hosts")
+	writeFlake(t, af.cfg.FlakeDir, `{ outputs = _: { nixosConfigurations.m = {}; }; }`)
+	if err := ensureSecrets(af.cfg, "m"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hosts.AddMembers(af.cfg.HostsFile, "manual", []string{"m"}); err != nil {
+		t.Fatal(err)
+	}
+	meta := manifest.Machine{Groups: []string{"managed"}}
+	if err := provisionApplicationResources(af.cfg, "m", meta); err != nil {
+		t.Fatal(err)
+	}
+	if err := provisionApplicationResources(af.cfg, "m", manifest.Machine{}); err != nil {
+		t.Fatal(err)
+	}
+	managed, err := hosts.GroupMembers(af.cfg.HostsFile, "managed")
+	if err != nil || len(managed) != 0 {
+		t.Fatal(managed, err)
+	}
+	manual, err := hosts.GroupMembers(af.cfg.HostsFile, "manual")
+	if err != nil || len(manual) != 1 {
+		t.Fatal(manual, err)
 	}
 }

@@ -2,15 +2,23 @@
   description = "NixOS machine deployment CLI";
 
   inputs = {
-    nixpkgs.url = "tarball+https://git.tatikoma.dev/omnixiah/nixpkgs/archive/omnixiah.tar.gz";
+    nixpkgs.follows = "omnixiah/nixpkgs";
 
-    flake-parts.url = "tarball+https://git.tatikoma.dev/omnixiah/flake-parts/archive/omnixiah.tar.gz";
-    flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
+    omnixiah = {
+      url = "tarball+https://git.tatikoma.dev/omnixiah/omnixiah/archive/master.tar.gz";
+      inputs.deploy.follows = "";
+    };
+
+    flake-parts.follows = "omnixiah/flake-parts";
   };
 
   outputs =
     inputs@{ flake-parts, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
+      imports = [ ./tests/flake-module.nix ];
+
+      flake.flakeModules.default = ./nix/flake-module.nix;
+
       flake.overlays.default = final: _prev: {
         deploy = final.callPackage ./package.nix { };
       };
@@ -23,19 +31,38 @@
       ];
 
       perSystem =
-        { pkgs, ... }:
+        {
+          pkgs,
+          system,
+          lib,
+          ...
+        }:
         let
+          inherit (lib) hasSuffix;
           deploy = pkgs.callPackage ./package.nix { };
+          devtools = import ./nix/devtools.nix { inherit pkgs; };
         in
         {
+          _module.args.pkgs =
+            if hasSuffix "-linux" system then
+              inputs.omnixiah.pkgs.${system}
+            else
+              import inputs.nixpkgs { inherit system; };
           packages.default = deploy;
 
           devShells.default = pkgs.mkShellNoCC {
             packages = with pkgs; [
               go
               gopls
-              gotools
+              devtools.gotools
               gofumpt
+              betteralign
+              just
+              shellcheck
+              nixfmt
+              python3
+              python3Packages.black
+              yq-go
 
               sops
               age

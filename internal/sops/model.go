@@ -9,22 +9,21 @@ import (
 
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
-
 	"git.tatikoma.dev/corpix/deploy/internal/sshkey"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
 )
 
 // Model is the declarative source of every recipient in .sops.yaml.
 type Model struct {
+	// Machines maps a machine to the age recipient derived from its host key.
+	Machines map[string]string
+	// Groups maps a group to its member machines.
+	Groups map[string][]string
 	// Admins are PGP fingerprints that can decrypt everything.
 	Admins []string
 	// Sessions are age recipients that can decrypt everything except
 	// vars/admin.
 	Sessions []string
-	// Machines maps a machine to the age recipient derived from its host key.
-	Machines map[string]string
-	// Groups maps a group to its member machines.
-	Groups map[string][]string
 }
 
 // LoadModel reads admins and sessions from the generic machine rule in
@@ -152,10 +151,10 @@ func ownedRule(regex string) bool {
 // Plan is the set of changes needed to make .sops.yaml and every encrypted
 // file match a Model.
 type Plan struct {
-	Rules        []creationRule
-	RulesChanged bool
+	Rules []creationRule
 	// Rekey lists files whose recorded recipients differ from their rule.
-	Rekey []string
+	Rekey        []string
+	RulesChanged bool
 }
 
 // Empty reports whether nothing needs to change.
@@ -180,7 +179,10 @@ func MakePlan(confPath, flakeDir string, m Model) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	files := ListEncryptedFiles(flakeDir)
+	files, err := ListEncryptedFiles(flakeDir)
+	if err != nil {
+		return Plan{}, err
+	}
 	sort.Strings(files)
 	for _, path := range files {
 		rule, err := matchRule(rules, confDir, path)

@@ -3,10 +3,10 @@ package cmd
 import (
 	"os"
 
-	"git.tatikoma.dev/corpix/atlas/errors"
-	"git.tatikoma.dev/corpix/atlas/log"
 	"github.com/urfave/cli/v2"
 
+	"git.tatikoma.dev/corpix/atlas/errors"
+	"git.tatikoma.dev/corpix/atlas/log"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
 	"git.tatikoma.dev/corpix/deploy/internal/state"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
@@ -26,7 +26,7 @@ func initCmd() *cli.Command {
 				Required: true,
 			},
 		},
-		Action: func(ctx *cli.Context) error {
+		Action: repositoryMutation(func(ctx *cli.Context) error {
 			cfg := getConfig(ctx)
 			pgpKeys := ctx.StringSlice("admin-pgp")
 			if len(pgpKeys) == 0 {
@@ -52,6 +52,6 @@ func initCmd() *cli.Command {
 			log.Info().Int("version", state.TargetVersion).Str("path", state.Path(cfg.FlakeDir)).Msg("schema state initialised")
 
 			return nil
-		},
+		}),
 	}
 }

@@ -3,10 +3,10 @@ package cmd
 import (
 	"fmt"
 
-	"git.tatikoma.dev/corpix/atlas/errors"
-	"git.tatikoma.dev/corpix/atlas/log"
 	"github.com/urfave/cli/v2"
 
+	"git.tatikoma.dev/corpix/atlas/errors"
+	"git.tatikoma.dev/corpix/atlas/log"
 	"git.tatikoma.dev/corpix/deploy/internal/hosts"
 )
 
@@ -73,7 +73,7 @@ func hostCmd() *cli.Command {
 						}
 					}
 				},
-				Action: func(ctx *cli.Context) error {
+				Action: repositoryMutation(func(ctx *cli.Context) error {
 					if ctx.NArg() < 2 {
 						return errors.New("usage: host set <machine> <addr>")
 					}
@@ -89,7 +89,7 @@ func hostCmd() *cli.Command {
 						return errors.Wrapf(err, "set address for %s", machine)
 					}
 					return nil
-				},
+				}),
 			},
 		},
 	}

@@ -6,10 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/deploy/internal/atomicfile"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
-	"gopkg.in/yaml.v3"
 )
 
 type sopsYAML struct {
@@ -18,9 +19,9 @@ type sopsYAML struct {
 
 type creationRule struct {
 	PathRegex string     `yaml:"path_regex"`
-	KeyGroups []keyGroup `yaml:"key_groups,omitempty"`
 	PGP       string     `yaml:"pgp,omitempty"`
 	Age       string     `yaml:"age,omitempty"`
+	KeyGroups []keyGroup `yaml:"key_groups,omitempty"`
 }
 
 type keyGroup struct {
@@ -135,20 +136,29 @@ func ListSessionKeys(confPath string) ([]string, error) {
 
 // ListEncryptedFiles returns every encrypted file currently managed in the
 // flake. The result is unsorted and may include paths that no longer exist.
-func ListEncryptedFiles(flakeDir string) []string {
+func ListEncryptedFiles(flakeDir string) ([]string, error) {
 	return allEncryptedFiles(flakeDir)
 }
 
-func allEncryptedFiles(flakeDir string) []string {
+func allEncryptedFiles(flakeDir string) ([]string, error) {
 	var files []string
-	adminGlob, _ := filepath.Glob(vars.AdminGlob(flakeDir))
-	for _, f := range adminGlob {
-		if !strings.HasSuffix(f, ".pub") {
-			fi, err := os.Stat(f)
-			if err == nil && !fi.IsDir() {
-				files = append(files, f)
+	walkErr := filepath.WalkDir(vars.AdminDir(flakeDir), func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			if path == vars.AdminDir(flakeDir) && os.IsNotExist(err) {
+				return nil
 			}
+			return err
 		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		if !entry.IsDir() && !strings.HasSuffix(path, ".pub") {
+			files = append(files, path)
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return nil, walkErr
 	}
 	for _, pat := range []string{
 		vars.MachineSecretsGlob(flakeDir),
@@ -159,7 +169,7 @@ func allEncryptedFiles(flakeDir string) []string {
 		matches, _ := filepath.Glob(pat)
 		files = append(files, matches...)
 	}
-	return files
+	return files, nil
 }
 
 func findGenericGroup(cfg sopsYAML, regex string) (keyGroup, error) {

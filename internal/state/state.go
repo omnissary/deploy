@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 
 	"git.tatikoma.dev/corpix/atlas/errors"
-
 	"git.tatikoma.dev/corpix/deploy/internal/atomicfile"
 )
 

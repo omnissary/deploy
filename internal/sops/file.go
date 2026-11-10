@@ -1,7 +1,9 @@
 package sops
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"os"
 	"sort"
 
 	gosops "github.com/getsops/sops/v3"
@@ -17,12 +19,13 @@ import (
 // decryption and written back by a single Save. A File must not be used after
 // Save.
 type File struct {
-	path    string
-	store   common.Store
-	tree    *gosops.Tree
-	dataKey []byte
-	dirty   bool
-	saved   bool
+	store    common.Store
+	tree     *gosops.Tree
+	path     string
+	dataKey  []byte
+	original [32]byte
+	dirty    bool
+	saved    bool
 }
 
 // Open decrypts the file at path and verifies its MAC. The format (YAML or
@@ -41,6 +44,10 @@ func OpenUnverified(path string) (*File, error) {
 func open(path string, ignoreMAC bool) (*File, error) {
 	log.Debug().Str("file", path).Bool("ignore-mac", ignoreMAC).Msg("sops open")
 
+	original, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
 	store := common.StoreForFormat(formats.FormatForPath(path), config.NewStoresConfig())
 
 	tree, err := common.LoadEncryptedFile(store, path)
@@ -59,7 +66,14 @@ func open(path string, ignoreMAC bool) (*File, error) {
 		return nil, errors.Wrapf(err, "sops decrypt %s", path)
 	}
 
-	return &File{path: path, store: store, tree: tree, dataKey: dataKey}, nil
+	latest, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if sha256.Sum256(original) != sha256.Sum256(latest) {
+		return nil, errors.New("secret file changed while opening; retry")
+	}
+	return &File{path: path, store: store, tree: tree, dataKey: dataKey, original: sha256.Sum256(original)}, nil
 }
 
 // Edit opens path, applies fn and saves the result if fn changed anything.
@@ -183,6 +197,13 @@ func (f *File) MarkDirty() {
 
 // Save re-encrypts and atomically writes the file if anything changed.
 func (f *File) Save() error {
+	latest, err := os.ReadFile(f.path)
+	if err != nil {
+		return err
+	}
+	if sha256.Sum256(latest) != f.original {
+		return errors.New("secret file changed since it was opened; refusing stale write")
+	}
 	if f.saved {
 		return errors.Errorf("sops file %s already saved", f.path)
 	}

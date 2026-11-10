@@ -1,0 +1,27 @@
+name: e2e
+on:
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test-e2e:
+    runs-on: nix
+    strategy:
+      fail-fast: false
+      matrix:
+        test: ["ssh-deploy", "zfs-install"]
+        arch: [x86_64-linux]
+    steps:
+      - uses: https://git.tatikoma.dev/corpix/checkout-action@v3
+        with:
+          fetch-depth: 50
+      - name: retain VM driver
+        timeout-minutes: 90
+        run: |
+          gcroot=$(echo ${{ github.repository }} | sed 's/\//-/g')
+          target="/nix/var/nix/gcroots/per-user/$(whoami)/$gcroot.e2e.${{ matrix.test }}.${{ matrix.arch }}"
+          nix build --out-link "$target" ".#checks.${{ matrix.arch }}.${{ matrix.test }}.driver"
+      - name: test-e2e ${{ matrix.test }}
+        timeout-minutes: 35
+        run: nix develop .#devShells.${{ matrix.arch }}.default --command just test-e2e ${{ matrix.test }}

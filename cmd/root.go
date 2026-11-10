@@ -12,17 +12,23 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/urfave/cli/v2"
+
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
 	"git.tatikoma.dev/corpix/deploy/internal/hosts"
+	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/nix"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
-	"github.com/urfave/cli/v2"
 )
 
 // Config holds values derived from global flags and is threaded through commands
 // via cli.Context metadata.
 type Config struct {
+	machineCache map[string]manifest.Machine
+	policyCache  *manifest.Manifest
+	manifestInfo func() (manifest.Manifest, error)
+	machineInfo  func(string) (manifest.Machine, error)
 	// FlakeDir is the absolute path to the flake root.
 	FlakeDir string
 	// SopsConf is the absolute path to .sops.yaml.
@@ -36,7 +42,8 @@ type Config struct {
 	// ImagesFlake is the flake ref for the deploy-images repository.
 	ImagesFlake string
 	// System is the target NixOS system tuple (e.g. x86_64-linux).
-	System string
+	System         string
+	SystemExplicit bool
 }
 
 // nixSystem returns the NixOS system tuple for the current machine's architecture.
@@ -73,6 +80,7 @@ func defaultNixBuildCores() int {
 // The rewrite covers both forms urfave/cli emits at the root level:
 //   - flag entries:    complete -c ...
 //   - command entries: complete -r -c ...
+//
 // fishScopedCmd describes a command whose subcommand-level fish completions need
 // scoping: file suppression, static-condition patching, and dynamic argument stanzas.
 type fishScopedCmd struct {
@@ -84,9 +92,22 @@ type fishScopedCmd struct {
 // and dynamic stanza generation. Extend this slice when new top-level commands with
 // subcommands are added.
 var fishScopedCmds = []fishScopedCmd{
+	{Parent: "pki", Subcommands: []string{"ca", "cert", "csr", "crl", "trust", "status"}},
+	{
+		Parent:      "ca",
+		Subcommands: []string{"create", "import", "list", "show", "renew", "rotate", "activate", "retire", "recover"},
+	},
+	{
+		Parent:      "cert",
+		Subcommands: []string{"ensure", "issue", "import", "list", "show", "renew", "rotate", "revoke", "verify", "export"},
+	},
+	{Parent: "yggdrasil", Subcommands: []string{"ensure", "show", "rotate"}},
 	{Parent: "secret", Subcommands: []string{"list", "get", "set", "del", "update", "mv", "verify"}},
-	{Parent: "key", Subcommands: []string{"host", "initrd", "ensure", "admin", "session"}},
-	{Parent: "machine", Subcommands: []string{"init", "build", "eval", "audit", "deploy", "ssh", "unlock"}},
+	{Parent: "key", Subcommands: []string{"host", "initrd", "ensure", "admin", "session", "yggdrasil"}},
+	{
+		Parent:      "machine",
+		Subcommands: []string{"init", "inspect", "provision", "build", "eval", "audit", "deploy", "ssh", "unlock"},
+	},
 	{Parent: "group", Subcommands: []string{"list", "show", "create", "add", "remove", "delete"}},
 	{Parent: "host", Subcommands: []string{"get", "set"}},
 	{Parent: "kexec", Subcommands: []string{"debug"}},
@@ -340,6 +361,7 @@ func (c *Config) MachineAttr(machine, suffix string) string {
 func New() *cli.App {
 	app := &cli.App{
 		Name:                 "deploy",
+		Version:              "0.2.0",
 		Usage:                "NixOS machine management tool",
 		EnableBashCompletion: true,
 		Flags: []cli.Flag{
@@ -426,13 +448,14 @@ func New() *cli.App {
 			}
 
 			cfg := &Config{
-				FlakeDir:    abs,
-				SopsConf:    filepath.Join(abs, ".sops.yaml"),
-				HostsFile:   resolve(ctx.Path("hosts-file")),
-				KnownHosts:  resolve(ctx.Path("known-hosts")),
-				SSHUser:     ctx.String("ssh-user"),
-				ImagesFlake: ctx.String("images-flake"),
-				System:      ctx.String("system"),
+				FlakeDir:       abs,
+				SopsConf:       filepath.Join(abs, ".sops.yaml"),
+				HostsFile:      resolve(ctx.Path("hosts-file")),
+				KnownHosts:     resolve(ctx.Path("known-hosts")),
+				SSHUser:        ctx.String("ssh-user"),
+				ImagesFlake:    ctx.String("images-flake"),
+				System:         ctx.String("system"),
+				SystemExplicit: ctx.IsSet("system"),
 			}
 			ctx.App.Metadata = map[string]interface{}{configKey: cfg}
 
@@ -452,6 +475,7 @@ func New() *cli.App {
 			groupCmd(),
 			migrateCmd(),
 			syncCmd(),
+			pkiCmd(),
 			machineCmd(),
 			kexecCmd(),
 			{

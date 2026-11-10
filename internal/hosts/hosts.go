@@ -23,10 +23,10 @@ import (
 	"path/filepath"
 	"sort"
 
-	"git.tatikoma.dev/corpix/atlas/errors"
-	"git.tatikoma.dev/corpix/atlas/log"
 	"gopkg.in/yaml.v3"
 
+	"git.tatikoma.dev/corpix/atlas/errors"
+	"git.tatikoma.dev/corpix/atlas/log"
 	"git.tatikoma.dev/corpix/deploy/internal/atomicfile"
 )
 
@@ -34,8 +34,8 @@ import (
 // addresses, or both. A plain YAML scalar unmarshals into Default; a mapping
 // unmarshals into Tags (with an optional "default" key populating Default).
 type AddressEntry struct {
-	Default string
 	Tags    map[string]string
+	Default string
 }
 
 // Get returns the address for the given operation tag. If the tag is not found

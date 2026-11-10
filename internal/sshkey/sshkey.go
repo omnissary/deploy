@@ -9,9 +9,10 @@ import (
 	"os/exec"
 	"strings"
 
+	"golang.org/x/crypto/ssh"
+
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
-	"golang.org/x/crypto/ssh"
 )
 
 // Pair holds an ed25519 key pair.

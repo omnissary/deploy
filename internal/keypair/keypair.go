@@ -9,17 +9,12 @@ import (
 
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
-
 	"git.tatikoma.dev/corpix/deploy/internal/atomicfile"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
 )
 
 // Spec describes one key pair.
 type Spec struct {
-	// Name labels the pair in logs and errors, e.g. "m host key".
-	Name string
-	// Priv is the path of the encrypted private key, Pub of the public key.
-	Priv, Pub string
 	// Generate returns a new private key and its public key.
 	Generate func() (priv, pub []byte, err error)
 	// Derive returns the public key for a private key, byte-identical to what
@@ -28,6 +23,10 @@ type Spec struct {
 	// Prepare, if set, runs after generation and before anything is written,
 	// e.g. to install the creation rule the private key is encrypted under.
 	Prepare func(pub []byte) error
+	// Name labels the pair in logs and errors, e.g. "m host key".
+	Name string
+	// Priv is the path of the encrypted private key, Pub of the public key.
+	Priv, Pub string
 }
 
 // Result reports what Ensure did.

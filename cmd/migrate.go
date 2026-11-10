@@ -7,11 +7,11 @@ import (
 	"sort"
 	"strings"
 
-	"git.tatikoma.dev/corpix/atlas/errors"
-	"git.tatikoma.dev/corpix/atlas/log"
 	"github.com/urfave/cli/v2"
 	"gopkg.in/yaml.v3"
 
+	"git.tatikoma.dev/corpix/atlas/errors"
+	"git.tatikoma.dev/corpix/atlas/log"
 	"git.tatikoma.dev/corpix/deploy/internal/hosts"
 	"git.tatikoma.dev/corpix/deploy/internal/sshkey"
 	"git.tatikoma.dev/corpix/deploy/internal/state"
@@ -21,9 +21,9 @@ import (
 // migration is a single schema-version step. Every step is idempotent: rerunning
 // it on already-migrated state must be a no-op.
 type migration struct {
-	from, to int
-	name     string
 	apply    func(*Config) error
+	name     string
+	from, to int
 }
 
 // migrations are applied in order, each one expected to bump the schema by one.
@@ -49,7 +49,7 @@ func migrateCmd() *cli.Command {
 				Usage: "report current and target schema versions without changing anything",
 			},
 		},
-		Action: func(ctx *cli.Context) error {
+		Action: repositoryMutation(func(ctx *cli.Context) error {
 			cfg := getConfig(ctx)
 			current, err := state.Load(cfg.FlakeDir)
 			if err != nil {
@@ -60,7 +60,7 @@ func migrateCmd() *cli.Command {
 				return nil
 			}
 			return runMigrations(cfg, current.Version)
-		},
+		}),
 	}
 }
 
