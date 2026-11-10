@@ -387,6 +387,42 @@ func (s Store) Verify(issuer, id string, checkKey bool) error {
 	return nil
 }
 
+func (s Store) Remove(issuer, id string) (*State, error) {
+	if issuer == "" {
+		states, err := s.List()
+		if err != nil {
+			return nil, err
+		}
+		for _, state := range states {
+			if current(&state, id) == nil {
+				continue
+			}
+			if issuer != "" {
+				return nil, errors.New("certificate ID ambiguous; specify --issuer")
+			}
+			issuer = state.ID
+		}
+		if issuer == "" {
+			return nil, errors.New("certificate not found")
+		}
+	}
+	state, err := s.Open(issuer)
+	if err != nil {
+		return nil, err
+	}
+	records := state.Records[:0]
+	for _, r := range state.Records {
+		if r.ID != id {
+			records = append(records, r)
+		}
+	}
+	if len(records) == len(state.Records) {
+		return nil, errors.New("certificate not found")
+	}
+	state.Records = records
+	return state, s.Save(state)
+}
+
 func (s Store) Revoke(issuer, id, serialText string, reason int) (*State, error) {
 	if reason < 0 || reason > 10 || reason == 7 || reason == 8 {
 		return nil, errors.New("unsupported revocation reason")

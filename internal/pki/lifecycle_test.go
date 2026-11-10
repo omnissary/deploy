@@ -386,6 +386,29 @@ func TestImportAcceptsHistoricalSerialReuse(t *testing.T) {
 	}
 }
 
+func TestRemoveForgetsCertificateWithoutRevocation(t *testing.T) {
+	s := fixture(t)
+	s.Create("root", manifest.Authority{})
+	for _, id := range []string{"kept", "gone"} {
+		if _, err := s.Certificate(id, leaf(), "issue", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.Remove("", "gone"); err != nil {
+		t.Fatal(err)
+	}
+	state, err := s.Load("root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Records) != 1 || state.Records[0].ID != "kept" || len(state.Revocations) != 0 {
+		t.Fatal("remove changed other records or revoked the certificate")
+	}
+	if _, err := s.Remove("root", "gone"); err == nil {
+		t.Fatal("removed a missing certificate")
+	}
+}
+
 func TestRevocationAppliesToAllAliasesOfAnIssuerSerial(t *testing.T) {
 	s := fixture(t)
 	s.Create("root", manifest.Authority{})

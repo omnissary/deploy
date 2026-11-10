@@ -367,6 +367,7 @@ func pkiCmd() *cli.Command {
 		{name: "renew", mutation: true},
 		{name: "rotate", mutation: true},
 		{name: "revoke", mutation: true},
+		{name: "remove", mutation: true},
 		{name: "verify", mutation: false},
 		{name: "export", mutation: true},
 	} {
@@ -385,6 +386,13 @@ func pkiCmd() *cli.Command {
 				return publicOutput(ctx, records)
 			}
 			id := ctx.Args().First()
+			if verb == "remove" {
+				if id == "" {
+					return errors.New("certificate name required")
+				}
+				_, err := store.Remove(ctx.String("issuer"), id)
+				return err
+			}
 			if verb == "revoke" && ctx.String("issuer") != "" && ctx.String("serial") != "" {
 				_, err := store.Revoke(ctx.String("issuer"), id, ctx.String("serial"), ctx.Int("reason"))
 				return err

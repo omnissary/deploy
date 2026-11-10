@@ -198,6 +198,7 @@ deploy pki cert rotate server-client
 deploy pki cert verify --check-key server-client
 deploy pki cert export --chain --out client-chain.pem server-client
 deploy pki cert revoke --reason 1 server-client
+deploy pki cert remove server-client
 deploy pki crl generate --out ca-crl.pem root
 deploy pki crl verify root
 deploy pki trust export --out trusted-ca.pem clients
@@ -209,6 +210,8 @@ renews it when due. Renew preserves its key. Rotate replaces it. Unmanaged
 material in a target requires explicit `pki cert import`. Import preserves the
 provided certificate and key without issuing a replacement. Certificate and
 private-key imports accept files, with `-` selecting stdin for one input.
+`cert remove` drops a certificate from the inventory without revoking it. The
+certificate stays valid until it expires.
 Listing, show, and mutation output is a table by default. Pass `--json` for
 the public inventory as JSON. Import responses contain public inventory only. Imported certificates may
 share a serial within an issuer generation. Revoking that serial revokes all of
