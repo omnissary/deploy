@@ -84,6 +84,11 @@ func authorityPolicy(ctx *cli.Context, id string) (manifest.Authority, error) {
 	if ctx.String("issuer") != "" {
 		spec.Issuer = ctx.String("issuer")
 	}
+	if spec.Target != nil {
+		if err := spec.Target.Validate(); err != nil {
+			return spec, err
+		}
+	}
 	return spec, nil
 }
 
@@ -132,7 +137,7 @@ func certificatePolicy(ctx *cli.Context, id string) (manifest.Certificate, error
 	if spec.Issuer == "" {
 		return spec, errors.New("issuer required")
 	}
-	return spec, nil
+	return spec, spec.Target.Validate()
 }
 
 func publicOutput(ctx *cli.Context, value any) error {

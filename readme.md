@@ -180,7 +180,6 @@ to operate with a public specification independently of Nix evaluation.
     renewBeforeDays = 30;
     target = {
       name = "server";
-      cert = "tls-cert";
       chain = "tls-cert";
       key = "tls-key";
     };
@@ -210,6 +209,10 @@ material in a target requires explicit `pki cert import`. Import preserves the
 provided certificate and key without issuing a replacement. Certificate and
 private-key imports accept files, with `-` selecting stdin for one input.
 Import responses contain public inventory only.
+
+A target maps `cert`, `key`, `chain`, and `ca` to YAML keys. Each key holds one
+role. `cert` holds the leaf, `chain` holds the leaf followed by its issuers, and
+`ca` holds the issuers only.
 
 Signing keys and certificate history live in admin-only encrypted state under
 `vars/admin/pki/`. Public inventory lives under `vars/pki/`. Authority signing

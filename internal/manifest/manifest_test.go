@@ -53,6 +53,8 @@ func TestRejectUnsupportedPolicies(t *testing.T) {
 }`,
 		`{"schemaVersion":2,"authorities":{"root":{"source":{"name":"old"}}}}`,
 		`{"schemaVersion":2} {}`,
+		`{"schemaVersion":2,"certificates":{"leaf":{"issuer":"root","target":{"name":"node","cert":"tls","chain":"tls","key":"tls-key"}}}}`,
+		`{"schemaVersion":2,"authorities":{"root":{"target":{"name":"node","cert":"ca","ca":"ca"}}}}`,
 	} {
 		if _, err := Decode([]byte(data)); err == nil {
 			t.Fatalf("accepted invalid policy: %s", data)

@@ -295,7 +295,7 @@ func TestExplicitImportPreservesCertificateAndKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target := manifest.Target{Name: "m", Cert: "client-cert", Chain: "client-cert", Key: "client-key"}
+	target := manifest.Target{Name: "m", Chain: "client-cert", Key: "client-key"}
 	path, _ := s.TargetPath(target)
 	os.MkdirAll(filepath.Dir(path), 0o700)
 	data, _ := json.Marshal(map[string]string{"client-cert": issued.Certificate + chain, "client-key": issued.Key})

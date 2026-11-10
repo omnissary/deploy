@@ -58,6 +58,26 @@ type Target struct {
 	CA    string `json:"ca"`
 	Group bool   `json:"group"`
 }
+
+func (t Target) Validate() error {
+	roles := map[string]string{}
+	for _, role := range []struct{ name, key string }{
+		{"cert", t.Cert},
+		{"key", t.Key},
+		{"chain", t.Chain},
+		{"ca", t.CA},
+	} {
+		if role.key == "" {
+			continue
+		}
+		if previous, ok := roles[role.key]; ok {
+			return errors.Errorf("target key %s is used for both %s and %s", role.key, previous, role.name)
+		}
+		roles[role.key] = role.name
+	}
+	return nil
+}
+
 type Authority struct {
 	Target         *Target  `json:"target,omitempty"`
 	PathLen        *int     `json:"pathLen,omitempty"`
@@ -161,10 +181,18 @@ func Decode(data []byte) (Manifest, error) {
 		m.Machines[name] = v
 	}
 	for name, spec := range m.Certificates {
+		if err := spec.Target.Validate(); err != nil {
+			return m, errors.Wrapf(err, "certificate %s", name)
+		}
 		spec.PolicySource = "nix"
 		m.Certificates[name] = spec
 	}
 	for name, spec := range m.Authorities {
+		if spec.Target != nil {
+			if err := spec.Target.Validate(); err != nil {
+				return m, errors.Wrapf(err, "authority %s", name)
+			}
+		}
 		spec.PolicySource = "nix"
 		m.Authorities[name] = spec
 	}
