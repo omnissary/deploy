@@ -7,12 +7,12 @@ trap 'gpgconf --kill gpg-agent' EXIT
 unset SOPS_AGE_KEY SOPS_AGE_KEY_FILE SOPS_AGE_KEY_CMD SOPS_AGE_SSH_PRIVATE_KEY_FILE
 mkdir -p "$GNUPGHOME"
 chmod 700 "$GNUPGHOME"
-gpg --batch --pinentry-mode loopback --passphrase '' --quick-generate-key 'Deploy test <deploy@example.invalid>' ed25519 sign 0
-fingerprint=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" { print $10; exit }')
-gpg --batch --pinentry-mode loopback --passphrase '' --quick-add-key "$fingerprint" cv25519 encr 0
+# shellcheck source=keys.sh
+source "$(dirname "${BASH_SOURCE[0]}")/keys.sh"
+fingerprint=$(import_pgp_identity "$TEST_IDENTITY")
 deploy --flake "$TEST_REPO" init --admin-pgp "$fingerprint"
 
-deploy_test() { deploy --flake "$TEST_REPO" "$@"; }
+deploy_in_repo() { deploy --flake "$TEST_REPO" "$@"; }
 
 expect_failure() {
   local label=$1

@@ -5,15 +5,22 @@
 }:
 let
   inherit (pkgs.lib) optionalAttrs;
+  inherit (pkgs.lib.meta) availableOn;
+  inherit (pkgs.stdenv) hostPlatform;
+  zfsInstall =
+    hostPlatform.isLinux
+    && hostPlatform.isEfi
+    && availableOn hostPlatform pkgs.zfs
+    && availableOn hostPlatform pkgs.OVMF;
 in
 {
   compatibility = import ./compatibility.nix { inherit pkgs; };
   cli = import ./cli { inherit pkgs deploy; };
 }
-// optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+// optionalAttrs hostPlatform.isLinux {
   ssh-deploy = import ./vm/ssh-deploy.nix { inherit pkgs deploy; };
 }
-// optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
+// optionalAttrs zfsInstall {
   zfs-install = import ./vm/zfs-install.nix {
     inherit pkgs deploy;
     diskoModule = disko.nixosModules.disko;

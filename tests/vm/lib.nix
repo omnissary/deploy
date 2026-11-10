@@ -1,22 +1,17 @@
 { pkgs, deploy }:
 let
-  inherit (pkgs)
-    bash
-    coreutils
-    gnupg
-    iproute2
-    jq
-    openssh
-    sops
-    writeShellScriptBin
-    ;
-  inherit (pkgs.lib) mkForce;
+  inherit (builtins) readFile;
+  inherit (pkgs) writeShellScriptBin;
+  inherit (pkgs.lib) mkForce mkMerge;
+  nixSettings = import ../lib/nix-settings.nix;
   prepare = writeShellScriptBin "prepare-deploy-test" ''
     set -euo pipefail
     mkdir -p /root/repo /root/.ssh
     cp /etc/deploy-test/flake.nix /root/repo/flake.nix
+    cp -rL /etc/deploy-test/fixtures /root/repo/fixtures
     export TEST_REPO=/root/repo
-    source ${../lib/setup.sh}
+    export TEST_IDENTITY=${../fixtures/admin.asc}
+    source ${../lib}/setup.sh
     if [ -e /etc/deploy-test/access-key ]; then
       install -m 600 /etc/deploy-test/access-key /root/.ssh/id_ed25519
       ssh-keygen -y -f /root/.ssh/id_ed25519 > /root/.ssh/id_ed25519.pub
@@ -27,16 +22,19 @@ let
 in
 {
   controller = {
+    environment.etc."deploy-test/fixtures".source = ./fixtures;
     # The disposable overlay cannot reclaim space from the shared host store.
     nix.enable = true;
     nix.gc.automatic = false;
     nix.optimise.automatic = false;
-    nix.settings = {
-      min-free = 0;
-      substituters = mkForce [ ];
-      flake-registry = "";
-    };
-    environment.systemPackages = [
+    nix.settings = mkMerge [
+      nixSettings
+      {
+        min-free = 0;
+        substituters = mkForce [ ];
+      }
+    ];
+    environment.systemPackages = with pkgs; [
       deploy
       bash
       coreutils
@@ -68,32 +66,18 @@ in
         }
       ];
     };
-    nix.settings = {
-      min-free = 0;
-      substituters = mkForce [ ];
-    };
+    nix.settings = mkMerge [
+      nixSettings
+      {
+        min-free = 0;
+        substituters = mkForce [ ];
+      }
+    ];
     virtualisation = {
       memorySize = 1024;
       cores = 2;
       writableStore = true;
     };
   };
-  prelude = ''
-    import shlex
-
-    def deploy_command(*args):
-        return "deploy --flake /root/repo " + shlex.join(args) + " < /dev/null 2>&1"
-
-    def run_deploy(*args):
-        return controller.succeed(deploy_command(*args), timeout=240)
-
-    def expect_deploy_failure(label, diagnostic, *args):
-        status, output = controller.execute(deploy_command(*args), timeout=90)
-        assert status != 0, f"{label}: command unexpectedly succeeded"
-        assert diagnostic in output, f"{label}: missing {diagnostic!r} in {output}"
-
-    def authorize_controller(machine):
-        public_key = controller.succeed("cat /root/.ssh/id_ed25519.pub").strip()
-        machine.succeed("mkdir -p -m 700 /root/.ssh && printf '%s\\n' " + shlex.quote(public_key) + " >> /root/.ssh/authorized_keys")
-  '';
+  prelude = readFile ./lib.py;
 }

@@ -1,11 +1,17 @@
 { pkgs }:
 let
   inherit (pkgs) lib runCommand;
-  inherit (lib) assertMsg runTests;
+  inherit (lib)
+    assertMsg
+    evalModules
+    mkDefault
+    runTests
+    types
+    ;
   inherit (builtins) toJSON;
   resolve = import ../nix/resolve.nix;
   platform = {
-    nixpkgs.hostPlatform.system = "x86_64-linux";
+    nixpkgs.hostPlatform.system = mkDefault "x86_64-linux";
     system.build = { };
   };
   networking = {
@@ -13,48 +19,56 @@ let
     boot.initrd.network.ssh.enable = true;
     boot.loader.supportsInitrdSecrets = true;
   };
+  mkMachine = modules: {
+    config =
+      (evalModules {
+        modules = [
+          { _module.freeformType = types.attrsOf types.anything; }
+          platform
+        ]
+        ++ modules;
+      }).config;
+  };
   metadata =
     (resolve {
       nixosConfigurations = {
-        zfs.config =
-          platform
-          // networking
-          // {
+        zfs = mkMachine [
+          networking
+          {
             fileSystems."/".fsType = "zfs";
-            modules = {
-              initrd-networking.enable = true;
-              zfs-crypt = {
-                enable = true;
-                pools.rpool.keyPath = "/run/zfs-keys/rpool.key";
-              };
+            modules.zfs-crypt = {
+              enable = true;
+              pools.rpool.keyPath = "/run/zfs-keys/rpool.key";
             };
-          };
-        luks.config =
-          platform
-          // networking
-          // {
+          }
+        ];
+        luks = mkMachine [
+          networking
+          {
             fileSystems."/".fsType = "btrfs";
-            modules = {
-              initrd-networking.enable = true;
-              cryptsetup.askPassword = true;
+            modules.cryptsetup.askPassword = true;
+          }
+        ];
+        board = mkMachine [
+          {
+            nixpkgs.hostPlatform.system = "armv7l-linux";
+            hardware.allwinner.chip.storage = "nand";
+            fileSystems."/".fsType = "ubifs";
+            system.build = {
+              nandFlash = "fixture";
+              diskoScript = "unconfigured";
             };
-          };
-        board.config = platform // {
-          nixpkgs.hostPlatform.system = "armv7l-linux";
-          hardware.allwinner.chip.storage = "nand";
-          fileSystems."/".fsType = "ubifs";
-          system.build = {
-            nandFlash = "fixture";
-            diskoScript = "unconfigured";
-          };
-        };
-        disko.config = platform // {
-          system.build.diskoScript = "fixture";
-          disko.devices.zpool.rpool.rootFsOptions = {
-            keyformat = "raw";
-            keylocation = "file:///run/keys/rpool";
-          };
-        };
+          }
+        ];
+        disko = mkMachine [
+          {
+            system.build.diskoScript = "fixture";
+            disko.devices.zpool.rpool.rootFsOptions = {
+              keyformat = "raw";
+              keylocation = "file:///run/keys/rpool";
+            };
+          }
+        ];
       };
     }).machines;
   failures = runTests {
