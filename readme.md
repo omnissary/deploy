@@ -1,381 +1,260 @@
 # deploy
 
-Minimal Go CLI for managing NixOS machines. Handles SSH keys, SOPS secrets, host inventory, and machine lifecycle.
+Deploy manages NixOS machines, SOPS secrets, SSH identities, and certificate
+authorities. It supports native ZFS encryption, legacy LUKS unlock, and
+CHIP NAND/UBIFS installation.
 
-## Usage
+## Getting started
 
-```
-deploy [global options] <command>
-```
+Run commands from your infrastructure flake, or select it with `--flake`.
+Initialize its admin recipients before provisioning a machine.
 
-Global options:
-
-| Flag | Env | Default | Description |
-|------|-----|---------|-------------|
-| `--flake`, `-f` | `DEPLOY_FLAKE` | `.` | path to flake root |
-| `--images-flake` | `DEPLOY_IMAGES_FLAKE` | `git+https://git.tatikoma.dev/corpix/deploy-images` | flake ref for installer images |
-| `--system` | `DEPLOY_SYSTEM` | auto-detected from host arch | target NixOS system tuple (e.g. `x86_64-linux`) |
-| `--ssh-user` | `DEPLOY_SSH_USER` | `root` | SSH user for remote ops |
-| `--known-hosts` | `DEPLOY_KNOWN_HOSTS` | `known_hosts` | local known_hosts file |
-| `--hosts-file` | `DEPLOY_HOSTS_FILE` | `hosts` | machine→address registry |
-| `--debug`, `-d` | `DEPLOY_DEBUG` | false | enable debug logging |
-
-## Commands
-
-### host
-
-Machine→address registry (YAML file).
-
-```
-deploy host get <machine>          # print registered address
-deploy host set <machine> <addr>   # register address
+```sh
+deploy init --admin-pgp <fingerprint>
+deploy machine inspect --json <machine>
+deploy machine provision <machine>
+deploy machine init <machine> <host>
+deploy machine deploy <machine>
 ```
 
-### key
+Provisioning creates missing credentials and reconciles recipients. It preserves
+existing keys. A missing public key is recovered from its encrypted private key.
+A missing private key or an invalid identity causes an error.
 
-Generate and encrypt per-machine SSH key pairs. Private keys are stored as SOPS-encrypted binary files; public keys sit alongside them unencrypted.
+Builds and deployments require provisioned credentials and current recipients.
+They check this without decrypting credentials or creating replacements.
+Run the provisioning command reported by an error before retrying.
 
-```
-deploy key host <machine>     # ensure openssh host key
-deploy key initrd <machine>   # ensure initrd SSH key
-deploy key ensure <machine>   # ensure both
-deploy key admin list|add|remove <fingerprint>   # admin PGP recipients (re-encrypts via sync)
-deploy key session ensure|unlock|remove [--name]  # dev-session age keys; unlock needs XDG_RUNTIME_DIR
-```
+Use `deploy --help` and `deploy <command> --help` for options. Options precede
+positional arguments.
 
-### secret
+| Global option | Environment | Default |
+| --- | --- | --- |
+| `--flake`, `-f` | `DEPLOY_FLAKE` | `.` |
+| `--images-flake` | `DEPLOY_IMAGES_FLAKE` | `git+https://git.tatikoma.dev/corpix/deploy-images` |
+| `--system` | `DEPLOY_SYSTEM` | Host architecture |
+| `--ssh-user` | `DEPLOY_SSH_USER` | `root` |
+| `--known-hosts` | `DEPLOY_KNOWN_HOSTS` | `known_hosts` |
+| `--hosts-file` | `DEPLOY_HOSTS_FILE` | `hosts` |
+| `--debug`, `-d` | `DEPLOY_DEBUG` | `false` |
 
-Manage SOPS-encrypted YAML secrets. `<name>` is a group from the hosts file
-(`vars/secrets/shared/<group>.yaml`) or a machine (`vars/secrets/<machine>.yaml`).
+## Deployment policy
 
-```
-deploy secret list [<name>]                         # list keys (no decryption)
-deploy secret get <name> <key>                      # decrypt and print a value
-deploy secret set <name> <key>                      # read value from stdin and write
-deploy secret del <name> <key>                      # delete a key
-deploy secret mv <src> <key> <dst> [<key>] [--force] # move/rename; refuses to overwrite without --force
-deploy secret verify [<name>]                       # check decryption and integrity of one or all files
-deploy secret repair <name> | --file <path> [--yes] # re-sign a file whose integrity check fails, after confirmation
-deploy secret update [<name>]                       # sync recipients; with a name also re-encrypt that file
-```
-
-`set` and `mv` never generate keys or change recipients. A machine needs a host
-key (`machine provision`) before its secrets file can be created, and a new file
-is only created while recipients are in sync.
-
-### sync
-
-`.sops.yaml` is generated from the admin PGP keys and session age keys in its
-generic rules, the machine host public keys under `vars/secrets/*/openssh/`, and
-the groups in the hosts file.
-
-```
-deploy sync [--dry-run]   # rewrite .sops.yaml and re-encrypt files whose recipients differ
-```
-
-`--dry-run` only reads file metadata and needs no decryption key. A re-encryption
-interrupted part-way is completed by the next `sync`.
-
-### machine
-
-NixOS machine lifecycle.
-
-```
-deploy machine init <machine> <host>       # provision, then bootstrap via nixos-anywhere
-deploy machine provision <machine|group...> # create missing keys, secrets file and ZFS root keys; sync recipients
-deploy machine build <machine...>          # build system toplevel
-deploy machine eval <machine> <attr>       # evaluate config attribute (JSON output)
-deploy machine audit <machine>             # check closure for source leaks
-deploy machine deploy <machine>            # deploy to running machine
-deploy machine ssh <machine>               # open interactive SSH session
-deploy machine unlock <machine>            # send ZFS root key to initrd listener
-```
-
-`init` flags: `--port` (default `22`), `--phases` (default `kexec,disko,install,reboot`),
-`--kexec-flavor` (default `zfs`), `--kexec` (explicit tarball path, skips auto-build),
-`--ssh-option` (extra SSH option, repeatable, prepended to nixos-anywhere SSH calls).  
-`unlock` flag: `--initrd-port` overrides the configured listener port (fallback `2222`).
-
-Machine `init` and `provision` reconcile declared credentials and recipients. `build`, `eval`,
-`audit`, `deploy` and `unlock` check that the machine is provisioned and that
-recipients are in sync, without decrypting anything, and fail with the command
-to run otherwise. Existing SSH/storage keys are never regenerated by provisioning: a missing public key is
-derived from its encrypted private key, a missing private key is an error.
-
-### kexec
-
-Build and test kexec installer images from the images flake.
-
-```
-deploy kexec [--flavor zfs|ext4]          # build image, print tarball path
-deploy kexec debug [--flavor zfs|ext4]    # build image and boot in QEMU (C-a x to exit)
-```
-
-## Images flake
-
-The `--images-flake` flag points to the flake that provides installer images used during
-machine bootstrap. Expected outputs:
-
-| Output | Description |
-|--------|-------------|
-| `packages.x86_64-linux.kexec-ext4` | kexec installer tarball — ext4 variant |
-| `packages.x86_64-linux.kexec-zfs`  | kexec installer tarball — ZFS variant  |
-
-Each output is a store directory containing
-`nixos-kexec-installer-<flavor>-x86_64-linux.tar.gz`.
-
-## Development
-
-```
-nix develop       # enter dev shell (go, gopls, sops, age, ssh-to-age)
-nix build         # build the wrapped binary
-nix run . -- --help
-```
-
-## License
-
-MIT
-
-## Deployment foundation (0.2)
-
-Public policy is Nix-first. Import `deploy.flakeModules.default` in a
-flake-parts flake, then set its `deploy` option. Alternatively expose the same
-policy as `flake.deploy`. The CLI resolves omitted machine fields from
-`nixosConfigurations` and rejects unsupported schema versions. Projection is
-per-machine, so inspecting a board does not evaluate unrelated servers.
+Import `deploy.flakeModules.default` into a flake-parts flake and declare its
+`deploy` option. You can also expose the policy directly as a flake output.
+Deploy fills omitted machine fields from `nixosConfigurations`. It evaluates
+only the selected machine and rejects unsupported schema versions.
 
 ```nix
 {
   deploy = {
     schemaVersion = 1;
     machines.example = {
-      groups = [ "loki-ca" ];
+      groups = [ "clients" ];
       yggdrasil = true;
-      yggdrasilAddressTag = "default";
       certificates = [ "example-client" ];
     };
-    authorities.loki = {
+    authorities.root = {
       subject = "Infrastructure issuer";
       algorithm = "p256";
       validityDays = 3650;
     };
     certificates.example-client = {
-      issuer = "loki";
+      issuer = "root";
       subject = "example.backbone";
       usage = [ "clientAuth" ];
       validityDays = 90;
       renewBeforeDays = 30;
       target = {
         name = "example";
-        cert = "loki-client-cert";
-        chain = "loki-client-cert";
-        key = "loki-client-key";
+        cert = "tls-cert";
+        chain = "tls-cert";
+        key = "tls-key";
       };
     };
-    trust.clients = [ "loki" ];
+    trust.clients = [ "root" ];
   };
 }
 ```
 
-Machine overrides include `system`, `hostKey`, `initrdSSH`, `initrdPort`,
-`installer = { backend; attribute; }`, `pools`, `groups`, tagged `addresses`,
-Yggdrasil policy, and certificate names. The compatibility adapter understands
-native ZFS encryption, disko, managed initrd SSH, legacy interactive LUKS, and
-CHIP NAND artifacts. Disabled initrd networking does not provision or require
-initrd keys. It does not infer a management requirement from existing key files.
+Machine policy can override `system`, `hostKey`, `initrdSSH`, `initrdPort`,
+`installer`, `pools`, `groups`, tagged `addresses`, Yggdrasil settings, and
+certificate names. Provisioning reconciles declared memberships while preserving
+manually maintained groups. Create or import declared authorities explicitly
+before provisioning certificates.
+
+## Machines
 
 ```sh
-deploy machine inspect --json pocketchip
-deploy machine provision example
-deploy machine init --build-only pocketchip
-deploy machine init pocketchip # runs its existing NAND flasher
-deploy machine init example 192.0.2.1 # existing nixos-anywhere install
+deploy machine provision <machine-or-group...>
+deploy machine build <machine...>
+deploy machine eval <machine> <attribute>
+deploy machine audit <machine>
+deploy machine deploy <machine...>
+deploy machine ssh <machine>
+deploy machine unlock <machine>
 ```
 
-The executable installer backend builds a declared `config.system.build.*`
-artifact and runs it directly. It never elevates privileges implicitly or puts
-decrypted keys into images. Successful NAND flashing reports
-`flashed-needs-configuration`: finish the existing post-boot deployment over USB
-or the board's network connection. Native remote installations retain the
-nixos-anywhere flags and staged secret delivery. Unsupported installations fail
-before provisioning or builds; ordinary build/deploy remain available.
+For remote installation, `deploy machine init <machine> <host>` uses
+nixos-anywhere. Its options include `--port`, `--phases`, `--kexec-flavor`,
+`--kexec`, and repeatable `--ssh-option`. The default phases are
+`kexec,disko,install,reboot`. A kexec image is built only when requested phases
+need one. Use `deploy kexec` to build an installer or `deploy kexec debug` to
+boot it in QEMU. The images flake must provide `kexec-zfs` or `kexec-ext4`
+packages for the selected system.
 
-ZFS pool metadata contains `keyPath`, `secret`, `format`, and optional dataset
-names. The default secret is `<pool>-root-key`. Existing keys are never replaced
-by provisioning. Raw keys are base64 in SOPS YAML and decoded at delivery;
-hex keys are 64 hexadecimal characters; passphrases remain textual. Live pool
-key rotation is a separate operation and is not implemented by replacing a
-secret. Legacy LUKS unlock delegates to the existing interactive initrd `unlock`
-command and never creates passphrases or changes key slots.
+For NAND boards, `deploy machine init --build-only pocketchip` builds the
+installer. `deploy machine init pocketchip` runs its declared
+`config.system.build.*` executable. It does not elevate privileges. After
+flashing, complete configuration over USB or the board's network connection.
+Unsupported installers fail before provisioning or building.
 
-### Identities and application provisioning
+ZFS pool policy sets `keyPath`, `format`, an optional `secret`, and optional
+`datasets`. The secret defaults to `<pool>-root-key`. Raw keys are stored as
+base64, hex keys contain 64 hexadecimal characters, and passphrases remain text.
+`deploy machine unlock` delivers the stored key to initrd SSH. Use
+`--initrd-port` to override its configured port. Pool keys are never put into
+installer images or rotated by provisioning. Legacy LUKS unlock runs the
+existing interactive initrd command without creating passphrases or changing
+key slots.
+
+## Secrets and identities
 
 ```sh
-deploy key yggdrasil ensure example
-deploy key yggdrasil show --json example
-deploy key yggdrasil rotate example
+deploy host get <machine>
+deploy host set <machine> <address>
+deploy key host <machine>
+deploy key initrd <machine>
+deploy key admin list
+deploy key admin add <fingerprint>
+deploy key session ensure
+deploy key session unlock
+deploy secret list <machine-or-group>
+deploy secret get <machine-or-group> <key>
+deploy secret set <machine-or-group> <key> < value.txt
+deploy secret del <machine-or-group> <key>
+deploy secret mv <source> <key> <destination>
+deploy secret verify
+deploy sync --dry-run
+deploy sync
 ```
 
-These commands accept existing Ed25519 PKCS#8 PEM identities. Ensure preserves
-an existing valid key; rotation archives the old key in admin-only encrypted
-storage. Public address/key projections live under
-`vars/public/<machine>/yggdrasil.json`. Declared address bindings are refreshed
-without editing Nix source. Nix modules can read these projections, using their
-existing public values until first adoption.
+Machine secrets live under `vars/secrets/`. Group secrets live under
+`vars/secrets/shared/`. Private SSH keys are SOPS encrypted and public keys sit
+beside them. Deploy generates `.sops.yaml` from admin and session recipients,
+machine public keys, and group membership. Use `deploy sync` after recipient
+changes. It resumes interrupted re-encryption. A dry run needs no decryption key.
 
-Machine provisioning ensures declared identities, group memberships, and
-certificate bundles after its infrastructure keys. CA creation/import remains
-explicit. Membership reconciliation removes only memberships previously owned
-by the declaration and preserves manually maintained memberships. Builds and
-deployments perform metadata/presence checks without decrypting credentials.
+Session unlock requires `XDG_RUNTIME_DIR`. Session keys can decrypt consumer
+material but cannot decrypt admin signing keys. Secret writes and moves do not
+generate credentials or change recipients.
 
-Stage the generated machine secret files, public projections, and admin PKI
-state explicitly after reviewing them. Deploy never stages or commits changes.
+```sh
+deploy key yggdrasil ensure <machine>
+deploy key yggdrasil show --json <machine>
+deploy key yggdrasil rotate <machine>
+```
 
-### Local PKI, with or without Nix policy evaluation
+Yggdrasil identities use Ed25519 PKCS#8 PEM keys. Rotation archives the previous
+key in admin storage. Public projections are written to
+`vars/public/<machine>/yggdrasil.json` for use by Nix modules. Declared address
+bindings are refreshed without editing Nix source.
 
-Every operation is available directly beneath `deploy pki`. For manual use,
-pass `--spec policy.json`: it is a public resource specification with the same
-fields as a named authority or certificate in the Nix contract. No Nix
-evaluation is required for manual specifications or inspection of stored state.
-The selected repository must already have initialized SOPS admin rules.
-Options precede positional resource names.
+## Certificates
+
+PKI commands use declared policy by default. Pass `--spec policy.json` to use
+the same resource fields without Nix evaluation. Inspection of stored state also
+works without Nix. Initialize SOPS admin rules before using PKI commands.
 
 ```sh
 deploy pki ca create --spec root.json root
-deploy pki ca import --cert-file ca.pem --key-file ca-key.pem loki
+deploy pki ca import --cert-file ca.pem --key-file ca-key.pem issuer
 deploy pki cert ensure example-client
-deploy pki cert renew example-client # preserves its private key
-deploy pki cert rotate example-client # explicitly replaces its key
+deploy pki cert renew example-client
+deploy pki cert rotate example-client
 deploy pki cert verify --check-key example-client
 deploy pki cert export --chain --out client-chain.pem example-client
 deploy pki cert revoke --reason 1 example-client
-deploy pki cert revoke --issuer loki --serial 0x1234 --reason 1
-deploy pki crl generate --out ca-crl.pem loki
-deploy pki crl verify loki
+deploy pki crl generate --out ca-crl.pem issuer
+deploy pki crl verify issuer
 deploy pki trust export --out trusted-ca.pem clients
 deploy pki status
 ```
 
-`ca list/show` and `cert list/show` expose public history, expiry times,
-fingerprints, and incomplete-publication state. Private-key export requires
-`cert export --private-key`; file exports use mode 0600 for private keys.
-Public verification validates chains and recorded revocations. It does not
-claim that external consumers enforce revocation: configure CRL delivery and
-checking in each consumer explicitly.
+New signing keys use ECDSA P-256 and admin-only SOPS storage. P-384, Ed25519,
+and RSA-2048/3072/4096 are also supported. Roots default to ten years,
+intermediates to five years, and leaves to 90 days. Children cannot outlive
+their issuer. Leaves default to server authentication and require DNS or IP
+SANs unless another usage is selected. Policy supports subjects, organization,
+UID, key usages, EKUs, and custom extensions.
 
-New signing keys default to ECDSA P-256 and admin-only SOPS storage. Optional
-algorithms are P-384, Ed25519, and RSA-2048/3072/4096. Root validity defaults to
-10 years, intermediate validity to 5 years, and leaf validity to 90 days;
-children cannot outlive their issuer. Leaf certificates default to serverAuth
-and require DNS/IP SANs unless another usage is selected explicitly. Policies
-support SANs, subjects/organization/UID, key usages, EKUs, and explicitly encoded
-custom extensions, including Atlas authorization capabilities.
+An authority's `source` can import existing SOPS material. An explicit `target`
+publishes it to a machine or group. Otherwise its signing key remains admin-only.
+Existing leaf bundles are adopted after validating the key pair and issuer.
+Missing or corrupt private keys cause errors rather than replacements.
 
-An authority's optional `source = { name; group; cert; key; }` imports existing
-SOPS material by reference. `target` explicitly publishes an issuer to a
-machine/group; absent that binding its signing key stays admin-only. Existing
-leaf bundles are adopted after validating their key pair and issuer. Missing
-private keys, corruption, and decryption failures never trigger replacements.
+`deploy pki cert ensure` reconciles policy and renews due certificates.
+`deploy pki cert renew` keeps the key. `deploy pki cert rotate` replaces it.
+`--force` repeats issuance without bypassing validation or rotating the key.
+Private export requires `--private-key` and writes files with mode 0600.
+Verification checks chains and recorded revocations. Configure CRL distribution
+and enforcement in consumers separately.
 
-Ensure reconciles policy and renews due certificates. Renew preserves keys;
-rotate replaces them. `--force` on certificate reconciliation repeats issuance
-without bypassing validation. It does not mean rotation, and there is no
-aggregate machine force that replaces unrelated keys.
-
-### CA generations, delegation, and recovery
+### Authority rotation and recovery
 
 ```sh
-deploy pki ca rotate root # prepares a generation; does not activate it
+deploy pki ca rotate root
 deploy pki trust export --out overlap.pem root
-# distribute and verify overlapping trust separately
+# Distribute overlapping trust and verify consumers before activation.
 deploy pki ca activate --generation 2 root
-# renew/reissue dependents and verify consumer rollout separately
+# Reissue dependents and verify rollout before retiring the old generation.
 deploy pki ca retire --generation 1 root
+deploy pki ca recover root
 ```
 
-Old keys and certificate history remain encrypted. Retirement refuses the
-active generation and known live dependents. Imported authorities may have
-untracked certificates; retiring one requires `--acknowledge-untracked` after
-operator review. Exported trust is not evidence of consumer rollout.
+Rotation prepares a generation without activating it. Old keys and history
+remain encrypted. Retirement refuses active generations and known live
+dependents. Imported authorities require `--acknowledge-untracked` because
+external certificates may exist. Trust export does not verify consumer rollout.
 
-For disconnected/delegated signing, `pki csr create` stores the request key in
-admin-only encrypted storage. Use `pki csr sign` with explicit issuer policy.
-`--ca` selects an intermediate-CA request/signing policy; importing the returned
-CA certificate under the request's name recovers the matching local key.
-CSR signatures and requested SANs are validated; requested CA privileges are
-never copied implicitly.
+For delegated signing, `deploy pki csr create` keeps the request key in admin
+storage. Sign with `deploy pki csr sign` and explicit issuer policy. `--ca`
+selects an intermediate request. Import the returned certificate under the same
+name to recover its matching local key. Deploy validates CSR signatures and SANs
+and does not copy requested CA privileges implicitly.
 
-Repository mutations take a controller-local exclusive lock. SOPS updates
-reject stale read/modify/write state. PKI persists a recovery journal in its
-encrypted authoritative state before publishing complete consumer bundles;
-interrupted publications are retried by the next mutating PKI operation.
-Read-only status reports stale/incomplete public projections. Root/intermediate
-history and CRL state live under `vars/admin/pki/`; public inventory lives under
-`vars/pki/`. Admin recipient synchronization includes nested state and archives.
+Mutations hold a local repository lock. SOPS writes reject stale state.
+Interrupted PKI publication is journaled and retried by the next mutation.
+`deploy pki ca recover` retries publication without issuing a certificate or
+replacing a key. Failed CRL signing leaves revocations recorded for the next
+`deploy pki crl generate` attempt. Encrypted history lives in `vars/admin/pki/`
+and public inventory in `vars/pki/`.
 
-ReactorCA informed lifecycle and inventory design. It is not a dependency;
-`reactor-ca/` remains outside deploy's tracked package sources. Tests use
-throwaway authorities, SOPS identities, and transports; no live CA, machine,
-or disk is required.
+Review and stage generated secrets, public projections, and admin state
+explicitly. Deploy does not stage or commit files.
 
-Pending CRL generation is tracked separately from revocation: a failed signer
-leaves the revocation recorded, and `pki crl generate` retries publication.
-`pki ca recover <name>` explicitly retries incomplete bundle/public-inventory
-publication without renewing a certificate or replacing a key.
+## Development and testing
 
-### Go formatting
+Enter the development shell before formatting or testing. Fast checks exercise
+the packaged CLI and compatibility with ZFS, LUKS, and NAND/UBIFS. VM checks
+exercise SSH deployment and encrypted ZFS installation on disposable systems.
+VM tests require Linux and KVM. The ZFS test also requires ZFS and UEFI firmware
+support in the selected package set.
 
-Run `nix develop` then `just fmt`. The workflow matches tunoperator: betteralign
-reorders struct fields, gofumpt formats Go sources, and goimports regroups imports
-with `git.tatikoma.dev/` as the local prefix. The development shell supplies the
-same pinned goimports regroup patch. Formatting is limited to deploy's own
-`main.go`, `cmd/`, and `internal/`; vendor sources and reactor-ca are excluded.
+```sh
+nix develop
+just fmt
+just lint
+go test ./...
+nix build
+just test
+just test cli
+just test compatibility
+just test-e2e
+just test-e2e ssh-deploy
+just test-e2e zfs-install
+```
 
-Run `just lint` (or `just lint-sh`) in the development shell to ShellCheck
-the shell scripts under `nix/` and `tests/`, including sourced test helpers.
-CI runs the same lint recipe.
+## License
 
-### Nix-backed end-to-end tests
-
-`just test` runs the fast packaged-CLI and compatibility checks. Select a check
-with `just test cli` or `just test compatibility`. `just test-e2e` runs the VM
-checks; select one with `just test-e2e ssh-deploy` or `just test-e2e zfs-install`.
-All checks are exposed under `checks.<system>` and registered in
-`tests/default.nix`.
-
-The CLI check uses real Nix evaluation, SOPS encryption, temporary GPG identities,
-and throwaway authorities. It covers declarative provisioning, repeat-run
-stability, certificate renewal/rotation/revocation, overlapping CA generations,
-and recovery from a blocked publication. Compatibility checks cover ZFS,
-legacy LUKS, and UBIFS/NAND metadata without flashing hardware.
-
-The SSH VM check uses the packaged CLI to repair a missing managed host key,
-copy a real NixOS closure, activate a changed configuration, and repeat the
-deployment. It also checks that a failed connection preserves provisioned
-credentials and the active target configuration.
-
-The ZFS check runs `machine init` through real nixos-anywhere and Disko against
-a disposable virtual disk. It starts in an installer, so it selects the
-`disko,install` phases without kexec or an automatic reboot. It then boots the
-installed system through UEFI, verifies that stage 2 cannot start before
-`machine unlock` delivers the stored pool key, and repeats a cold boot with
-the same key. No decrypted pool key is included in the installed image.
-
-VM checks require a Linux runner with KVM and the Nix `kvm`/`nixos-test` system
-features. The ZFS install check currently targets x86_64-linux. CI runs fast
-checks on PRs and pushes. The separate E2E workflow is manually dispatched and
-retains VM drivers as per-user GC roots, following tunoperator’s runner
-conventions. Tests use only isolated virtual networking and prebuilt store
-closures; guests do not download packages. Test access keys are
-generated solely for the disposable VMs. No infrastructure secrets, machines,
-or physical disks are used.
-
-Linux packages and VM tests use omnixiah's shared package set and
-`pkgs.omnixiah.runNixOSTest`. Its deploy input follows the root flake with
-`inputs.omnixiah.inputs.deploy.follows = ""`, so the shared overlay and the
-tests both use this checkout. Deploy's overlay stays independent of that
-package set, allowing the input graph to refer back to the root without
-recursive package evaluation. Darwin continues to use the pinned nixpkgs
-package set. Deploy follows omnixiah’s nixpkgs and flake-parts pins; Disko
-comes from the same input graph.
+MIT
