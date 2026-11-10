@@ -97,7 +97,7 @@ Legacy flat format (`machine: addr` at top level) is still read and rewritten on
 
 ## Atomic writes
 
-All persistent writes go through `internal/atomicfile`: `Write` replaces a file via a unique temp file, fsync and rename; `Create` does the same but fails with `os.ErrExist` instead of overwriting. Never use `os.WriteFile` for files under the flake.
+All persistent writes go through `internal/atomicfile`: `Write` replaces a file via a unique temp file, fsync and rename. `Create` does the same but fails with `os.ErrExist` instead of overwriting. Never use `os.WriteFile` for files under the flake.
 
 ## multi-machine deploy
 
@@ -114,8 +114,9 @@ Stage explicit paths and leave unrelated changes, including reactor-ca, alone.
 Run `nix develop` and `just fmt` before committing Go changes. The pipeline uses
 betteralign, gofumpt, and patched goimports with `git.tatikoma.dev/` as the local
 import prefix. Keep long configuration literals and callbacks on multiple lines.
-The formatters do not automatically wrap them. Format only deploy's own sources,
-leaving vendor and reactor-ca untouched.
+The formatters do not automatically wrap them. Format only deploy's own Go sources in `main.go`, `cmd/`, `internal/`, and
+`nix/`, leaving vendor and reactor-ca untouched. `just fmt` also formats tracked
+Nix files with nixfmt and VM Python scripts with Black.
 Use the declared Go package name for imports. Add an import alias only to resolve
 a real name collision. Do not invent aliases based on the repository name.
 
@@ -138,7 +139,7 @@ Use disposable identities, virtual networks, and disks. Keep fast checks in
 Close stdin for unattended CLI calls in VM tests so SSH cannot consume the
 test driver protocol. Disable store GC pressure and scheduled maintenance in
 disposable guests, and force empty substituters when testing offline.
-Run `just lint` for changes to shell scripts; ShellCheck follows sourced helpers.
+Run `just lint` for changes to shell scripts. ShellCheck follows sourced helpers.
 
 ## Documentation
 
