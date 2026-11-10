@@ -65,6 +65,8 @@
               betteralign
               just
               shellcheck
+              nixfmt
+              python3Packages.black
 
               sops
               age
