@@ -26,7 +26,7 @@ test ! -e "$TEST_REPO/vars/admin/pki"
 deploy secret del node tls-cert
 deploy secret del node tls-key
 expect_failure 'explicit authority prerequisite' 'no such file' deploy pki cert ensure node-client
-deploy pki ca create root >root-created.json
+deploy pki ca create --json root >root-created.json
 deploy pki cert ensure node-client
 
 deploy group create clients
@@ -40,15 +40,18 @@ deploy machine provision node board
 sha256sum --check before-provision
 
 deploy pki cert verify --check-key node-client
+deploy pki cert list | grep -q '^node-client  *root/1 '
+deploy pki status | grep -q '^root  *1 '
+deploy pki cert list --json | jq -e 'map(.id) == ["node-client"]'
 deploy pki trust export --out root.pem root
 deploy pki cert export --out client.pem node-client
 openssl verify -purpose sslclient -CAfile root.pem client.pem
 deploy pki cert export --private-key --out original-key.pem node-client
 test "$(stat -c %a original-key.pem)" = 600
-deploy pki cert renew node-client >renewed.json
+deploy pki cert renew --json node-client >renewed.json
 deploy pki cert export --private-key --out renewed-key.pem node-client
 cmp original-key.pem renewed-key.pem
-deploy pki cert rotate node-client >rotated.json
+deploy pki cert rotate --json node-client >rotated.json
 deploy pki cert export --private-key --out rotated-key.pem node-client
 if cmp -s original-key.pem rotated-key.pem; then echo 'ASSERT FAIL: rotation kept the old key' >&2; exit 1; fi
 
@@ -57,21 +60,21 @@ expect_failure 'revoked certificate' revoked deploy pki cert verify node-client
 deploy pki crl generate --out crl.pem root
 deploy pki crl verify root
 openssl crl -in crl.pem -CAfile root.pem -verify -noout
-deploy pki ca rotate root >root-rotated.json
-deploy pki ca show root | jq -e '.active == 1 and (.generations | length) == 2'
+deploy pki ca rotate --json root >root-rotated.json
+deploy pki ca show --json root | jq -e '.active == 1 and (.generations | length) == 2'
 deploy pki trust export --out overlap.pem root
 test "$(grep -c 'BEGIN CERTIFICATE' overlap.pem)" = 2
 expect_failure 'active generation retirement' 'cannot retire active' deploy pki ca retire --generation 1 root
-deploy pki ca activate --generation 2 root >activated.json
+deploy pki ca activate --json --generation 2 root >activated.json
 expect_failure 'live dependents block retirement' 'unexpired certificates' deploy pki ca retire --generation 1 root
 # Explicitly revoke every tracked leaf under generation 1 before retiring it.
-deploy pki ca show root >before-retirement.json
+deploy pki ca show --json root >before-retirement.json
 while IFS= read -r serial; do
   deploy pki cert revoke --issuer root --serial "$serial" --reason 1
 done < <(jq -r '.records[] | select(.generation == 1) | .serial' before-retirement.json | sort -u)
-deploy pki cert rotate node-client >new-generation-client.json
+deploy pki cert rotate --json node-client >new-generation-client.json
 deploy pki cert verify --check-key node-client
-deploy pki ca retire --generation 1 root >retired.json
+deploy pki ca retire --json --generation 1 root >retired.json
 deploy pki trust export --out current-root.pem root
 test "$(grep -c 'BEGIN CERTIFICATE' current-root.pem)" = 1
 deploy pki cert export --out current-client.pem node-client
@@ -86,13 +89,13 @@ cat >recovery.json <<'EOF'
 {"subject":"Recovery test","target":{"name":"publishers","group":true,"cert":"ca-cert","key":"ca-key"}}
 EOF
 expect_failure 'interrupted publication' 'publication pending' deploy pki ca create --spec recovery.json recovery
-deploy pki ca show recovery >recovery-pending.json
+deploy pki ca show --json recovery >recovery-pending.json
 jq -e '.incomplete' recovery-pending.json
 rmdir vars/secrets/shared/publishers.yaml
 mv publishers.backup vars/secrets/shared/publishers.yaml
-deploy pki ca recover recovery >recovered.json
+deploy pki ca recover --json recovery >recovered.json
 test "$(jq -r '.generations[0].fingerprint' recovery-pending.json)" = "$(jq -r '.generations[0].fingerprint' recovered.json)"
-deploy pki ca show recovery | jq -e '.incomplete != true and (.generations | length) == 1'
+deploy pki ca show --json recovery | jq -e '.incomplete != true and (.generations | length) == 1'
 deploy secret get publishers ca-cert >published-ca.pem
 openssl x509 -in published-ca.pem -noout -subject | grep -F 'Recovery test'
 
@@ -123,5 +126,5 @@ openssl req -new -x509 -key import-key.pem -out import-ca.pem -days 30 \
   -addext keyUsage=critical,keyCertSign,cRLSign
 printf '{"subject":"Streamed-test-issuer"}' >import-policy.json
 expect_failure 'ambiguous import input' 'only one import input' deploy pki ca import --spec import-policy.json --cert-file - --key-file - ambiguous
-cat import-key.pem | deploy pki ca import --spec import-policy.json --cert-file import-ca.pem --key-file - streamed >imported-public.json
+cat import-key.pem | deploy pki ca import --json --spec import-policy.json --cert-file import-ca.pem --key-file - streamed >imported-public.json
 if grep -F 'PRIVATE KEY' imported-public.json; then echo 'ASSERT FAIL: import exposed private material' >&2; exit 1; fi

@@ -209,7 +209,8 @@ renews it when due. Renew preserves its key. Rotate replaces it. Unmanaged
 material in a target requires explicit `pki cert import`. Import preserves the
 provided certificate and key without issuing a replacement. Certificate and
 private-key imports accept files, with `-` selecting stdin for one input.
-Import responses contain public inventory only. Imported certificates may
+Listing, show, and mutation output is a table by default. Pass `--json` for
+the public inventory as JSON. Import responses contain public inventory only. Imported certificates may
 share a serial within an issuer generation. Revoking that serial revokes all of
 them. Issued certificates always get unique serials.
 

@@ -6,7 +6,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"text/tabwriter"
+	"time"
 
 	"github.com/urfave/cli/v2"
 
@@ -141,7 +144,89 @@ func certificatePolicy(ctx *cli.Context, id string) (manifest.Certificate, error
 }
 
 func publicOutput(ctx *cli.Context, value any) error {
-	return json.NewEncoder(ctx.App.Writer).Encode(value)
+	if ctx.Bool("json") {
+		return json.NewEncoder(ctx.App.Writer).Encode(value)
+	}
+	w := tabwriter.NewWriter(ctx.App.Writer, 0, 0, 2, ' ', 0)
+	switch v := value.(type) {
+	case []pki.State:
+		fmt.Fprintln(w, "AUTHORITY\tACTIVE\tGENERATIONS\tCERTIFICATES\tSTATE")
+		for _, state := range v {
+			fmt.Fprintf(w, "%s\t%d\t%d\t%d\t%s\n", state.ID, state.Active, len(state.Generations), len(state.Records), authorityState(&state))
+		}
+	case *pki.State:
+		fmt.Fprintf(w, "authority:\t%s\nactive:\t%d\nstate:\t%s\n", v.ID, v.Active, authorityState(v))
+		fmt.Fprintln(w, "\nGENERATION\tISSUER\tEXPIRES\tRETIRED")
+		for _, g := range v.Generations {
+			issuer := "-"
+			if g.Issuer != "" {
+				issuer = fmt.Sprintf("%s/%d", g.Issuer, g.IssuerGeneration)
+			}
+			fmt.Fprintf(w, "%d\t%s\t%s\t%t\n", g.ID, issuer, g.NotAfter.Format(time.DateOnly), g.Retired)
+		}
+		if len(v.Records) > 0 {
+			fmt.Fprintln(w)
+			writeRecords(w, v.Records)
+		}
+	case []pki.Record:
+		writeRecords(w, v)
+	case *pki.Record:
+		fmt.Fprintf(w, "certificate:\t%s\nissuer:\t%s/%d\nserial:\t%s\nexpires:\t%s\nstatus:\t%s\nfingerprint:\t%s\n",
+			v.ID, v.Spec.Issuer, v.Generation, v.Serial, v.NotAfter.Format(time.DateOnly), recordState(v), v.Fingerprint)
+	case map[string]bool:
+		if v["valid"] {
+			fmt.Fprintln(w, "valid")
+		}
+	case map[string]any:
+		keys := make([]string, 0, len(v))
+		for key := range v {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			fmt.Fprintf(w, "%s:\t%v\n", key, v[key])
+		}
+	default:
+		return json.NewEncoder(ctx.App.Writer).Encode(value)
+	}
+	return w.Flush()
+}
+
+func writeRecords(w io.Writer, records []pki.Record) {
+	fmt.Fprintln(w, "CERTIFICATE\tISSUER\tSERIAL\tEXPIRES\tSTATUS")
+	for i := range records {
+		r := &records[i]
+		fmt.Fprintf(w, "%s\t%s/%d\t%s\t%s\t%s\n", r.ID, r.Spec.Issuer, r.Generation, r.Serial, r.NotAfter.Format(time.DateOnly), recordState(r))
+	}
+}
+
+func authorityState(state *pki.State) string {
+	var flags []string
+	if state.Imported {
+		flags = append(flags, "imported")
+	}
+	if state.Incomplete {
+		flags = append(flags, "incomplete")
+	}
+	if len(state.Pending) > 0 {
+		flags = append(flags, "pending")
+	}
+	if len(flags) == 0 {
+		return "ok"
+	}
+	return strings.Join(flags, ",")
+}
+
+func recordState(r *pki.Record) string {
+	switch {
+	case r.RevokedAt != nil:
+		return "revoked"
+	case r.External:
+		return "external"
+	case r.Imported:
+		return "imported"
+	}
+	return "issued"
 }
 
 func outputPEM(ctx *cli.Context, value string, private bool) error {
@@ -504,7 +589,7 @@ func pkiCmd() *cli.Command {
 			return outputPEM(ctx, record.Certificate, false)
 		}))
 	}
-	root.Subcommands = []*cli.Command{ca, cert, csr, crl, trust, {Name: "status", Before: optionsBeforeArgs, Action: func(ctx *cli.Context) error {
+	root.Subcommands = []*cli.Command{ca, cert, csr, crl, trust, {Name: "status", Before: optionsBeforeArgs, Flags: []cli.Flag{&cli.BoolFlag{Name: "json"}}, Action: func(ctx *cli.Context) error {
 		states, err := pkiStore(getConfig(ctx)).List()
 		if err != nil {
 			return err
