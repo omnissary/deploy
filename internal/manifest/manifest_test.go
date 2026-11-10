@@ -13,7 +13,7 @@ func TestPolicyContract(t *testing.T) {
 		InitrdSSH:       true,
 		InitrdPort:      6666,
 		Unlock:          "zfs",
-		Pools:           map[string]Pool{"rpool": {KeyPath: "/run/keys/root", Secret: "root-key", Format: "raw"}},
+		Pools:           map[string]Pool{"rpool": {KeyPath: "/run/keys/root", Secret: "root-key", Format: "passphrase"}},
 		RequiredSecrets: []SecretRef{{Name: "service", Group: true, Key: "client-cert"}},
 	}
 	policy := Manifest{SchemaVersion: Version, Machines: map[string]Machine{"server": machine}}
@@ -62,9 +62,8 @@ func TestRejectUnsupportedPolicies(t *testing.T) {
 	}
 }
 
-func TestStoragePolicyRequiresExplicitSecretAndFormat(t *testing.T) {
-	for _, field := range []string{`"secret": "key",`, `"format": "hex",`} {
-		document := `{
+func TestStoragePolicyFormatIsOptional(t *testing.T) {
+	document := `{
   "schemaVersion": 2,
   "machines": {
     "node": {
@@ -79,8 +78,26 @@ func TestStoragePolicyRequiresExplicitSecretAndFormat(t *testing.T) {
     }
   }
 }`
-		if _, err := Decode([]byte(strings.Replace(document, field, "", 1))); err == nil {
-			t.Fatal("accepted incomplete storage binding")
-		}
+	if _, err := Decode([]byte(strings.Replace(document, `"secret": "key",`, "", 1))); err == nil {
+		t.Fatal("accepted pool without secret")
+	}
+	if _, err := Decode([]byte(strings.Replace(document, `"format": "hex",`, `"format": "raw",`, 1))); err == nil {
+		t.Fatal("accepted unsupported pool format")
+	}
+	m, err := Decode([]byte(strings.Replace(document, `"format": "hex",`, "", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := m.Machines["node"].Pools["rpool"]
+	if _, err := GenerateStorageKey(pool.Format); err == nil {
+		t.Fatal("generated a key for a pool without format")
+	}
+	if _, err := StorageKeyBytes(pool, " \n"); err == nil {
+		t.Fatal("accepted empty key")
+	}
+	value := "short-passphrase\n"
+	key, err := StorageKeyBytes(pool, value)
+	if err != nil || string(key) != value {
+		t.Fatalf("key not delivered as stored: %q %v", key, err)
 	}
 }

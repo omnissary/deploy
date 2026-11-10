@@ -55,10 +55,11 @@ selects `vars/secrets/<name>.yaml`. With `group = true`, it selects
 `vars/secrets/shared/<name>.yaml`. These references require existing entries.
 Provisioning does not generate their application credentials.
 
-Pool bindings require an explicit `secret`, absolute target `keyPath`, and
-`format`: `hex`, `raw`, or `passphrase`. Raw keys are base64 in YAML and decoded
-at delivery. Hex keys contain 64 hexadecimal characters. Provisioning preserves
-existing storage keys and rejects invalid material.
+Pool bindings require an explicit `secret` and absolute target `keyPath`. The
+optional `format` names the pool's ZFS `keyformat`: `hex` or `passphrase`.
+Provisioning generates a missing key only when `format` is set, and rejects
+existing keys that do not match it. Hex keys contain 64 hexadecimal characters.
+Without `format`, the key must already exist and is delivered as stored.
 
 ## Machine operations
 

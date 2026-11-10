@@ -168,7 +168,7 @@ func Decode(data []byte) (Manifest, error) {
 				return m, errors.Errorf("invalid keyPath for %s/%s", name, pool)
 			}
 			switch p.Format {
-			case "hex", "raw", "passphrase":
+			case "", "hex", "passphrase":
 			default:
 				return m, errors.Errorf("unsupported key format for %s/%s", name, pool)
 			}
