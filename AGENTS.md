@@ -160,9 +160,3 @@ Keep deployment policy explicit. Do not add migrations, compatibility adapters,
 old-schema readers, implicit credential adoption, or module-specific inference.
 Machine provisioning manages declared infrastructure credentials only.
 Yggdrasil and PKI lifecycle commands are explicit operations.
-
-Change deploy only during this redesign. Infrastructure repositories will be
-migrated manually afterward. Never read, decrypt, or print their secret values
-into tool output. For a later authorized migration, pass values directly between
-processes or encrypted stores. Renaming and repositioning encrypted data is
-allowed. Test only with disposable generated credentials.
