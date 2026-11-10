@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        test: [ssh-deploy, zfs-install]
+        test: ["ssh-deploy", "zfs-install"]
         arch: [x86_64-linux]
     steps:
       - uses: https://git.tatikoma.dev/corpix/checkout-action@v3

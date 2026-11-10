@@ -15,6 +15,8 @@
   outputs =
     inputs@{ flake-parts, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
+      imports = [ ./tests/flake-module.nix ];
+
       flake.flakeModules.default = ./nix/flake-module.nix;
 
       flake.overlays.default = final: _prev: {
@@ -36,7 +38,7 @@
           ...
         }:
         let
-          inherit (lib) assertMsg hasSuffix;
+          inherit (lib) hasSuffix;
           deploy = pkgs.callPackage ./package.nix { };
           devtools = import ./nix/devtools.nix { inherit pkgs; };
         in
@@ -47,14 +49,6 @@
             else
               import inputs.nixpkgs { inherit system; };
           packages.default = deploy;
-          checks =
-            assert assertMsg (
-              inputs.omnixiah.inputs.deploy.outPath == inputs.self.outPath
-            ) "omnixiah must use the root deploy checkout";
-            import ./tests {
-              inherit pkgs deploy;
-              disko = inputs.omnixiah.inputs.disko;
-            };
 
           devShells.default = pkgs.mkShellNoCC {
             packages = with pkgs; [
@@ -66,7 +60,9 @@
               just
               shellcheck
               nixfmt
+              python3
               python3Packages.black
+              yq-go
 
               sops
               age

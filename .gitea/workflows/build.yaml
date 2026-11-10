@@ -26,7 +26,10 @@ jobs:
       - name: lint
         run: nix develop .#devShells.x86_64-linux.default --command just lint
 
-      - name: packaged CLI and compatibility checks
+      - name: check generated workflows
+        run: nix develop .#devShells.x86_64-linux.default --command just gen-check
+
+      - name: fast checks
         run: nix develop .#devShells.x86_64-linux.default --command just test
 
       - name: retain development shell

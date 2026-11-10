@@ -239,7 +239,9 @@ Enter the development shell before formatting or testing. Fast checks exercise
 the packaged CLI and compatibility with ZFS, LUKS, and NAND/UBIFS. VM checks
 exercise SSH deployment and encrypted ZFS installation on disposable systems.
 VM tests require Linux and KVM. The ZFS test also requires ZFS and UEFI firmware
-support in the selected package set.
+support in the selected package set. Register tests by suite in
+`tests/default.nix`. Run `just test-list` to list enabled tests and `just gen`
+to update the CI matrix after adding or removing an E2E test.
 
 ```sh
 nix develop
@@ -253,6 +255,8 @@ just test compatibility
 just test-e2e
 just test-e2e ssh-deploy
 just test-e2e zfs-install
+just test-list
+just gen
 ```
 
 ## License

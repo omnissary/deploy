@@ -11,7 +11,7 @@ fmt-go:
 
 fmt-meta:
   git ls-files -z '*.nix' | xargs -0 -r nixfmt
-  black tests/vm
+  black tests
 
 lint: lint-sh
 
@@ -19,23 +19,22 @@ lint-sh:
   find nix tests -type f -name '*.sh' -print0 | xargs -0 shellcheck -x -P SCRIPTDIR
 
 test name="all":
-  #!/usr/bin/env bash
-  set -euo pipefail
-  system=$(nix eval --raw --impure --expr builtins.currentSystem)
-  case "{{name}}" in
-    all) checks=(cli compatibility) ;;
-    cli|compatibility|ssh-deploy|zfs-install) checks=("{{name}}") ;;
-    *) echo "unknown test '{{name}}'" >&2; exit 1 ;;
-  esac
-  targets=()
-  for check in "${checks[@]}"; do targets+=(".#checks.$system.$check"); done
-  nix build --no-link --print-build-logs "${targets[@]}"
+  python3 tests/run.py --suite fast {{quote(name)}}
 
 test-e2e name="all":
+  python3 tests/run.py --suite e2e {{quote(name)}}
+
+test-list suite="all":
+  python3 tests/run.py --suite {{quote(suite)}} --list
+
+workflow:
   #!/usr/bin/env bash
   set -euo pipefail
-  case "{{name}}" in
-    all) just test ssh-deploy; just test zfs-install ;;
-    ssh-deploy|zfs-install) just test "{{name}}" ;;
-    *) echo "expected all, ssh-deploy, or zfs-install" >&2; exit 1 ;;
-  esac
+  export E2E_TESTS
+  E2E_TESTS=$(python3 tests/run.py --suite e2e --system x86_64-linux --list)
+  yq -i '.jobs."test-e2e".strategy.matrix.test = env(E2E_TESTS)' .gitea/workflows/e2e.yaml
+
+gen: workflow
+
+gen-check: gen
+  git diff --exit-code -- .gitea/workflows/e2e.yaml

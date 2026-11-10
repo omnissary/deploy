@@ -14,15 +14,19 @@ let
     && availableOn hostPlatform pkgs.OVMF;
 in
 {
-  compatibility = import ./compatibility.nix { inherit pkgs; };
-  cli = import ./cli { inherit pkgs deploy; };
-}
-// optionalAttrs hostPlatform.isLinux {
-  ssh-deploy = import ./vm/ssh-deploy.nix { inherit pkgs deploy; };
-}
-// optionalAttrs zfsInstall {
-  zfs-install = import ./vm/zfs-install.nix {
-    inherit pkgs deploy;
-    diskoModule = disko.nixosModules.disko;
+  fast = {
+    runner = import ./runner.nix { inherit pkgs; };
+    compatibility = import ./compatibility.nix { inherit pkgs; };
+    cli = import ./cli { inherit pkgs deploy; };
   };
+  e2e =
+    optionalAttrs hostPlatform.isLinux {
+      ssh-deploy = import ./vm/ssh-deploy.nix { inherit pkgs deploy; };
+    }
+    // optionalAttrs zfsInstall {
+      zfs-install = import ./vm/zfs-install.nix {
+        inherit pkgs deploy;
+        diskoModule = disko.nixosModules.disko;
+      };
+    };
 }
