@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -181,7 +179,7 @@ func machineInitCmd() *cli.Command {
 				Usage: "extra SSH option to prepend to nixos-anywhere SSH calls; can be repeated",
 			},
 		},
-		Action: repositoryMutation(func(ctx *cli.Context) error {
+		Action: installationAction(func(ctx *cli.Context) error {
 			if ctx.NArg() < 1 {
 				return errors.New("usage: machine init <machine> [host]")
 			}
@@ -203,9 +201,6 @@ func machineInitCmd() *cli.Command {
 				return err
 			}
 			if ctx.Bool("build-only") {
-				if err := requireMachinesProvisioned(cfg, machine); err != nil {
-					return err
-				}
 				return buildInstallArtifacts(ctx, cfg, machine, meta)
 			}
 			handler, err := installationBackends.Resolve(backend)
@@ -245,6 +240,9 @@ func machineInitCmd() *cli.Command {
 			log.Info().Str("machine", machine).Str("host", host).Int("port", port).Msg("initialising machine")
 
 			if err := provisionMachine(cfg, machine); err != nil {
+				return err
+			}
+			if err := requireDeploymentCredentials(cfg, machine); err != nil {
 				return err
 			}
 
@@ -327,15 +325,11 @@ func machineInitCmd() *cli.Command {
 				return errors.Wrap(err, "nixos-anywhere")
 			}
 
-			if meta.YggdrasilAddressTag != "default" && meta.Addresses["default"] == "" {
-				if err := hosts.SetAddress(cfg.HostsFile, machine, "", host); err != nil {
-					return err
-				}
+			if err := hosts.SetAddress(cfg.HostsFile, machine, "ssh", host); err != nil {
+				return err
 			}
-			if meta.Addresses["unlock"] == "" {
-				if err := hosts.SetAddress(cfg.HostsFile, machine, "unlock", host); err != nil {
-					return err
-				}
+			if err := hosts.SetAddress(cfg.HostsFile, machine, "unlock", host); err != nil {
+				return err
 			}
 			log.Info().Str("machine", machine).Str("host", host).Msg("machine initialised")
 			return nil
@@ -370,10 +364,6 @@ func machineBuildCmd() *cli.Command {
 
 			machines, err := resolveTargetMachines(cfg, ctx.Args().Slice())
 			if err != nil {
-				return err
-			}
-
-			if err := requireMachinesProvisioned(cfg, machines...); err != nil {
 				return err
 			}
 
@@ -462,9 +452,6 @@ func machineEvalCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			if err := requireMachinesProvisioned(cfg, machine); err != nil {
-				return err
-			}
 
 			attr := ctx.Args().Get(1)
 			fullAttr := cfg.MachineAttr(machine, "config."+attr)
@@ -502,16 +489,12 @@ func machineAuditCmd() *cli.Command {
 				return err
 			}
 
-			if err := requireMachinesProvisioned(cfg, machine); err != nil {
-				return err
-			}
-
 			meta, err := machineMetadata(cfg, machine)
 			if err != nil {
 				return err
 			}
 			attrs := map[string]string{"toplevel": cfg.MachineAttr(machine, "config.system.build.toplevel")}
-			if meta.Disko {
+			if meta.Installer.Backend == "nixos-anywhere" {
 				attrs["diskoScript"] = cfg.MachineAttr(machine, "config.system.build.diskoScript")
 			}
 
@@ -590,23 +573,14 @@ func machineDeployCmd() *cli.Command {
 				return errors.New("--host can only be used when deploying a single machine")
 			}
 
-			if err := requireMachinesProvisioned(cfg, machines...); err != nil {
+			if err := requireDeploymentCredentials(cfg, machines...); err != nil {
 				return err
 			}
 
-			// Resolve and register hosts up front.
+			// Resolve deployment destinations before starting any connection.
 			hostFor := make(map[string]string, len(machines))
 			for _, machine := range machines {
 				if hostOverride != "" {
-					meta, err := machineMetadata(cfg, machine)
-					if err != nil {
-						return err
-					}
-					if meta.YggdrasilAddressTag != "default" && meta.Addresses["default"] == "" {
-						if err := hosts.SetAddress(cfg.HostsFile, machine, "", hostOverride); err != nil {
-							return errors.Wrapf(err, "register host for %s", machine)
-						}
-					}
 					hostFor[machine] = hostOverride
 				} else {
 					h, err := hosts.GetAddress(cfg.HostsFile, machine, "ssh")
@@ -730,9 +704,14 @@ func deployMachine(cfg *Config, machine, targetHost string, nixc *nix.Client, wc
 
 	// Upload the managed ssh host key before activation so sops-nix
 	// derives the expected age identity from /etc/ssh/ssh_host_ed25519_key.
-	log.Info().Str("machine", machine).Msg("checking ssh host key")
-	if err := uploadOpenSSHHostKey(cfg, machine, sshAlias, sshArgs, wc); err != nil {
+	meta, err := machineMetadata(cfg, machine)
+	if err != nil {
 		return err
+	}
+	if meta.HostKey {
+		if err := uploadOpenSSHHostKey(cfg, machine, sshAlias, sshArgs, wc); err != nil {
+			return err
+		}
 	}
 
 	// Upload initrd host keys.
@@ -847,20 +826,17 @@ func machineUnlockZFSCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			if err := requireMachinesProvisioned(cfg, machine); err != nil {
-				return err
-			}
 
 			meta, err := machineMetadata(cfg, machine)
 			if err != nil {
 				return err
 			}
+			if err := requireUnlockCredentials(cfg, machine, meta); err != nil {
+				return err
+			}
 			initrdPort := meta.InitrdPort
 			if ctx.IsSet("initrd-port") || initrdPort == 0 {
 				initrdPort = ctx.Int("initrd-port")
-			}
-			if !meta.InitrdSSH {
-				return errors.New("machine has no managed initrd SSH capability")
 			}
 
 			host, err := hosts.GetAddress(cfg.HostsFile, machine, "unlock")
@@ -900,9 +876,6 @@ func machineUnlockZFSCmd() *cli.Command {
 			for pool, remotePath := range pools {
 				poolSpec := meta.Pools[pool]
 				secretName := poolSpec.Secret
-				if secretName == "" {
-					secretName = zfsRootKeyName(pool)
-				}
 				key, err := secrets.Get(secretName)
 				if err != nil {
 					return errors.Wrapf(err, "read ZFS root key of pool %s for %s", pool, machine)
@@ -932,6 +905,14 @@ func machineUnlockZFSCmd() *cli.Command {
 // --- helpers ---
 
 func prepareExtraSSHKeys(cfg *Config, machine, extraDir string) error {
+	meta, err := machineMetadata(cfg, machine)
+	if err != nil {
+		return err
+	}
+	if !meta.HostKey {
+		return nil
+	}
+
 	srcPriv := vars.MachineHostKeyPath(cfg.FlakeDir, machine)
 	srcPub := vars.MachineHostKeyPubPath(cfg.FlakeDir, machine)
 
@@ -1051,12 +1032,7 @@ func terminateSSHControlMaster(pid int, masterErrCh <-chan error, signal syscall
 	return nil
 }
 
-// encryptedZFSPools returns a map of pool name → remote key path for every
-// ZFS pool that uses file-based encryption.
-//
-// The preferred source is explicit initrd unlock metadata from
-// config.modules.zfs-crypt.pools. Disko rootFsOptions are used as a fallback for
-// machines that declare their encrypted pools through config.disko.devices.zpool.
+// Read the declared pool key paths.
 func encryptedZFSPools(cfg *Config, machine string) (map[string]string, error) {
 	meta, err := machineMetadata(cfg, machine)
 	if err != nil {
@@ -1100,9 +1076,6 @@ func decryptZFSKeys(cfg *Config, machine string) (map[string]string, error) {
 		log.Debug().Str("machine", machine).Str("pool", pool).Msg("decrypting ZFS root key")
 		poolSpec := meta.Pools[pool]
 		secretName := poolSpec.Secret
-		if secretName == "" {
-			secretName = zfsRootKeyName(pool)
-		}
 		key, err := secrets.Get(secretName)
 		if err != nil {
 			return nil, errors.Wrapf(err, "read ZFS root key of pool %s for %s", pool, machine)
@@ -1134,12 +1107,14 @@ func decryptZFSKeys(cfg *Config, machine string) (map[string]string, error) {
 	return result, nil
 }
 
-// provisionMachine idempotently creates every key and secrets file a machine
-// needs and syncs recipients. It never replaces existing keys.
+// Provision the declared host, initrd, and storage credentials.
 func provisionMachine(cfg *Config, machine string) error {
 	meta, err := machineMetadata(cfg, machine)
 	if err != nil {
 		return err
+	}
+	if !meta.HostKey && !meta.InitrdSSH && len(meta.Pools) == 0 {
+		return nil
 	}
 	if err := ensureSopsConf(cfg); err != nil {
 		return err
@@ -1163,41 +1138,42 @@ func provisionMachine(cfg *Config, machine string) error {
 	if err := ensureZFSKey(cfg, machine); err != nil {
 		return err
 	}
-	return provisionApplicationResources(cfg, machine, meta)
+	return nil
 }
 
-// requireMachinesProvisioned checks, without decrypting or writing anything,
-// that each machine has its keys and secrets file and that recipients are in
-// sync.
-func requireMachinesProvisioned(cfg *Config, machines ...string) error {
-	if err := ensureSopsConf(cfg); err != nil {
-		return err
-	}
+// Deployment checks encrypted file metadata without decrypting credentials.
+func requireDeploymentCredentials(cfg *Config, machines ...string) error {
+	needsSOPS := false
 	for _, machine := range machines {
-		var missing []string
 		meta, err := machineMetadata(cfg, machine)
 		if err != nil {
 			return err
 		}
-		paths := []string{vars.MachineSecretsPath(cfg.FlakeDir, machine)}
+		paths := []string{}
 		if meta.HostKey {
 			paths = append(paths, vars.MachineHostKeyPath(cfg.FlakeDir, machine), vars.MachineHostKeyPubPath(cfg.FlakeDir, machine))
 		}
 		if meta.InitrdSSH {
 			paths = append(paths, vars.MachineInitrdKeyPath(cfg.FlakeDir, machine), vars.MachineInitrdKeyPubPath(cfg.FlakeDir, machine))
 		}
+		references := append(storageSecrets(machine, meta), meta.RequiredSecrets...)
+		if len(paths)+len(references) > 0 {
+			needsSOPS = true
+		}
 		for _, path := range paths {
 			if !fileExists(path) {
-				missing = append(missing, relToFlake(cfg, path))
+				return errors.Errorf("missing infrastructure credential %s; run 'deploy machine provision %s'", relToFlake(cfg, path), machine)
 			}
 		}
-		if err := requireApplicationResources(cfg, machine, meta); err != nil {
+		if err := requireSecrets(cfg, references); err != nil {
 			return err
 		}
-		if len(missing) > 0 {
-			return errors.Errorf("machine %s is not provisioned (missing %s); run 'deploy machine provision %s'",
-				machine, strings.Join(missing, ", "), machine)
-		}
+	}
+	if !needsSOPS {
+		return nil
+	}
+	if err := ensureSopsConf(cfg); err != nil {
+		return err
 	}
 	return requireRecipientsInSync(cfg)
 }
@@ -1250,9 +1226,6 @@ func ensureZFSKey(cfg *Config, machine string) error {
 	return sops.Edit(vars.MachineSecretsPath(cfg.FlakeDir, machine), func(file *sops.File) error {
 		for _, name := range names {
 			pool := meta.Pools[name]
-			if pool.Secret == "" {
-				pool.Secret = zfsRootKeyName(name)
-			}
 			if _, err := file.SetIfAbsent(pool.Secret, func() (string, error) {
 				return manifest.GenerateStorageKey(pool.Format)
 			}); err != nil {
@@ -1268,41 +1241,6 @@ func ensureZFSKey(cfg *Config, machine string) error {
 		}
 		return nil
 	})
-}
-
-// ensureZFSPoolKeys creates missing root keys for pools in a single
-// decrypt/encrypt cycle. Existing keys are never replaced, and a decryption
-// failure aborts without writing.
-func ensureZFSPoolKeys(path, machine string, pools []string) error {
-	if len(pools) == 0 {
-		return nil
-	}
-	return sops.Edit(path, func(f *sops.File) error {
-		for _, pool := range pools {
-			created, err := f.SetIfAbsent(zfsRootKeyName(pool), generateZFSKey)
-			if err != nil {
-				return errors.Wrapf(err, "ensure ZFS root key of pool %s for %s", pool, machine)
-			}
-			if created {
-				log.Info().Str("machine", machine).Str("pool", pool).Msg("wrote new ZFS root key")
-			} else {
-				log.Debug().Str("machine", machine).Str("pool", pool).Msg("ZFS key already present")
-			}
-		}
-		return nil
-	})
-}
-
-func zfsRootKeyName(pool string) string {
-	return pool + "-root-key"
-}
-
-func generateZFSKey() (string, error) {
-	keyBytes := make([]byte, 32)
-	if _, err := rand.Read(keyBytes); err != nil {
-		return "", errors.Wrap(err, "generate ZFS key")
-	}
-	return hex.EncodeToString(keyBytes), nil
 }
 
 func prepareInitrdKeys(cfg *Config, machine, extraDir string) error {

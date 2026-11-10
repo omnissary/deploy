@@ -72,7 +72,7 @@ func TestMutationCommandsDeclareRepositoryLock(t *testing.T) {
 	}
 	defer release()
 	for _, path := range []string{
-		"init", "sync", "migrate", "host set",
+		"init", "sync", "host set",
 		"machine init", "machine provision", "machine deploy",
 		"key host", "key initrd", "key ensure", "key admin add", "key admin remove", "key session ensure", "key session remove",
 		"group create", "group add", "group remove", "group delete",
@@ -102,5 +102,23 @@ func TestMutationCommandsDeclareRepositoryLock(t *testing.T) {
 				t.Fatalf("mutation did not acquire lock: %v", err)
 			}
 		})
+	}
+}
+
+func TestArtifactBuildDoesNotAcquireMutationLock(t *testing.T) {
+	root := t.TempDir()
+	app := &cli.App{Metadata: map[string]interface{}{"deploy.config": &Config{FlakeDir: root}}}
+	flags := flag.NewFlagSet("test", flag.ContinueOnError)
+	flags.Bool("build-only", true, "")
+	ctx := cli.NewContext(app, flags, nil)
+	release, err := repolock.Acquire(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	called := false
+	action := installationAction(func(*cli.Context) error { called = true; return nil })
+	if err := action(ctx); err != nil || !called {
+		t.Fatal("artifact build tried to mutate repository", err)
 	}
 }

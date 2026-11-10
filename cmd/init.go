@@ -8,7 +8,6 @@ import (
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/atlas/log"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
-	"git.tatikoma.dev/corpix/deploy/internal/state"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
 )
 
@@ -45,11 +44,6 @@ func initCmd() *cli.Command {
 				return errors.Wrapf(err, "create %s", adminDir)
 			}
 			log.Info().Str("path", adminDir).Msg("vars/admin directory created")
-
-			if err := state.Save(cfg.FlakeDir, &state.State{Version: state.TargetVersion}); err != nil {
-				return errors.Wrap(err, "write initial state")
-			}
-			log.Info().Int("version", state.TargetVersion).Str("path", state.Path(cfg.FlakeDir)).Msg("schema state initialised")
 
 			return nil
 		}),

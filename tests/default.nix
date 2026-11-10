@@ -16,7 +16,7 @@ in
 {
   fast = {
     runner = import ./runner.nix { inherit pkgs; };
-    compatibility = import ./compatibility.nix { inherit pkgs; };
+    contract = import ./contract.nix { inherit pkgs; };
     cli = import ./cli { inherit pkgs deploy; };
   };
   e2e =

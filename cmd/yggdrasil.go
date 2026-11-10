@@ -11,8 +11,6 @@ import (
 
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/deploy/internal/atomicfile"
-	"git.tatikoma.dev/corpix/deploy/internal/hosts"
-	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
 	ygg "git.tatikoma.dev/corpix/deploy/internal/yggdrasil"
@@ -22,7 +20,7 @@ func yggPublicPath(cfg *Config, machine string) string {
 	return vars.PublicResourcePath(cfg.FlakeDir, machine, "yggdrasil.json")
 }
 
-func provisionYggdrasil(cfg *Config, machine string, meta manifest.Machine, rotate bool) (ygg.Identity, error) {
+func provisionYggdrasil(cfg *Config, machine string, rotate bool) (ygg.Identity, error) {
 	path := vars.MachineSecretsPath(cfg.FlakeDir, machine)
 	var identity ygg.Identity
 	err := sops.Edit(path, func(file *sops.File) error {
@@ -86,15 +84,6 @@ func provisionYggdrasil(cfg *Config, machine string, meta manifest.Machine, rota
 			return identity, err
 		}
 	}
-	if meta.YggdrasilAddressTag != "" {
-		tag := meta.YggdrasilAddressTag
-		if tag == "default" {
-			tag = ""
-		}
-		if err := hosts.SetAddress(cfg.HostsFile, machine, tag, identity.Address); err != nil {
-			return identity, err
-		}
-	}
 	return identity, nil
 }
 
@@ -127,11 +116,7 @@ func yggdrasilCmd() *cli.Command {
 					return err
 				}
 			} else {
-				meta, err := machineMetadata(cfg, machine)
-				if err != nil {
-					return err
-				}
-				identity, err = provisionYggdrasil(cfg, machine, meta, verb == "rotate")
+				identity, err = provisionYggdrasil(cfg, machine, verb == "rotate")
 				if err != nil {
 					return err
 				}

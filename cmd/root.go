@@ -361,7 +361,7 @@ func (c *Config) MachineAttr(machine, suffix string) string {
 func New() *cli.App {
 	app := &cli.App{
 		Name:                 "deploy",
-		Version:              "0.2.0",
+		Version:              "0.3.0",
 		Usage:                "NixOS machine management tool",
 		EnableBashCompletion: true,
 		Flags: []cli.Flag{
@@ -473,7 +473,6 @@ func New() *cli.App {
 			keyCmd(),
 			secretCmd(),
 			groupCmd(),
-			migrateCmd(),
 			syncCmd(),
 			pkiCmd(),
 			machineCmd(),

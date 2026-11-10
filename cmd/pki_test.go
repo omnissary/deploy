@@ -34,3 +34,9 @@ func TestLifecycleRejectsOptionsAfterResourceName(t *testing.T) {
 		t.Fatal("silently ignored trailing force flag")
 	}
 }
+
+func TestImportRejectsAmbiguousStdin(t *testing.T) {
+	if _, _, err := readImportInputs("-", "-"); err == nil {
+		t.Fatal("accepted two stdin inputs")
+	}
+}

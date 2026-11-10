@@ -2,17 +2,20 @@
 package manifest
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"path/filepath"
 	"strings"
 
 	"git.tatikoma.dev/corpix/atlas/errors"
+	"git.tatikoma.dev/corpix/deploy/internal/vars"
 	"git.tatikoma.dev/corpix/deploy/nix"
 )
 
 var Expression = nix.ManifestExpression
 
-const Version = 1
+const Version = 2
 
 type Manifest struct {
 	Machines      map[string]Machine     `json:"machines"`
@@ -21,22 +24,21 @@ type Manifest struct {
 	Trust         map[string][]string    `json:"trust"`
 	SchemaVersion int                    `json:"schemaVersion"`
 }
+type SecretRef struct {
+	Name  string `json:"name"`
+	Key   string `json:"key"`
+	Group bool   `json:"group"`
+}
 type Machine struct {
-	Pools               map[string]Pool   `json:"pools"`
-	Addresses           map[string]string `json:"addresses"`
-	Installer           Installer         `json:"installer"`
-	RootFS              string            `json:"rootFS"`
-	System              string            `json:"system"`
-	Unlock              string            `json:"unlock"`
-	YggdrasilAddressTag string            `json:"yggdrasilAddressTag"`
-	Source              string            `json:"source,omitempty"`
-	Groups              []string          `json:"groups"`
-	Certificates        []string          `json:"certificates"`
-	InitrdPort          int               `json:"initrdPort"`
-	HostKey             bool              `json:"hostKey"`
-	InitrdSSH           bool              `json:"initrdSSH"`
-	Disko               bool              `json:"disko"`
-	Yggdrasil           bool              `json:"yggdrasil"`
+	Pools           map[string]Pool `json:"pools"`
+	Installer       Installer       `json:"installer"`
+	RootFS          string          `json:"rootFS"`
+	System          string          `json:"system"`
+	Unlock          string          `json:"unlock"`
+	RequiredSecrets []SecretRef     `json:"requiredSecrets"`
+	InitrdPort      int             `json:"initrdPort"`
+	HostKey         bool            `json:"hostKey"`
+	InitrdSSH       bool            `json:"initrdSSH"`
 }
 type Installer struct {
 	Backend   string `json:"backend"`
@@ -59,7 +61,6 @@ type Target struct {
 type Authority struct {
 	Target         *Target  `json:"target,omitempty"`
 	PathLen        *int     `json:"pathLen,omitempty"`
-	Source         *Target  `json:"source,omitempty"`
 	PolicySource   string   `json:"policySource,omitempty"`
 	Issuer         string   `json:"issuer"`
 	Subject        string   `json:"subject"`
@@ -94,33 +95,68 @@ type Certificate struct {
 
 func Decode(data []byte) (Manifest, error) {
 	var m Manifest
-	if err := json.Unmarshal(data, &m); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&m); err != nil {
 		return m, err
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return m, errors.New("expected one deploy policy document")
 	}
 	if m.SchemaVersion != Version {
 		return m, errors.Errorf("unsupported deploy schemaVersion %d (supported: %d)", m.SchemaVersion, Version)
 	}
 	for name, v := range m.Machines {
+		if !vars.ValidName(name) || v.System == "" {
+			return m, errors.Errorf("machine %s requires a valid name and explicit system", name)
+		}
 		if v.InitrdPort == 0 {
 			v.InitrdPort = 2222
 		}
-		for pool, p := range v.Pools {
-			if p.Secret == "" {
-				p.Secret = pool + "-root-key"
+		if v.InitrdPort < 1 || v.InitrdPort > 65535 {
+			return m, errors.Errorf("invalid initrdPort for %s", name)
+		}
+		switch v.Unlock {
+		case "":
+		case "zfs", "luks":
+			if !v.InitrdSSH {
+				return m, errors.Errorf("unlock for %s requires initrdSSH", name)
 			}
-			if p.Format == "" {
-				p.Format = "hex"
+			if v.Unlock == "zfs" && len(v.Pools) == 0 {
+				return m, errors.Errorf("ZFS unlock for %s requires pools", name)
+			}
+		default:
+			return m, errors.Errorf("unsupported unlock backend %q", v.Unlock)
+		}
+		switch v.Installer.Backend {
+		case "", "nixos-anywhere":
+			if v.Installer.Attribute != "" {
+				return m, errors.New("installer attribute requires executable backend")
+			}
+		case "executable":
+			if !strings.HasPrefix(v.Installer.Attribute, "config.system.build.") {
+				return m, errors.New("executable installer requires a config.system.build artifact")
+			}
+		default:
+			return m, errors.Errorf("unsupported installer backend %q", v.Installer.Backend)
+		}
+		for pool, p := range v.Pools {
+			if !vars.ValidName(pool) || p.Secret == "" {
+				return m, errors.Errorf("pool %s/%s requires an explicit secret", name, pool)
 			}
 			if !filepath.IsAbs(p.KeyPath) || strings.ContainsAny(p.KeyPath, "\x00\r\n") {
 				return m, errors.Errorf("invalid keyPath for %s/%s", name, pool)
 			}
-			v.Pools[pool] = p
+			switch p.Format {
+			case "hex", "raw", "passphrase":
+			default:
+				return m, errors.Errorf("unsupported key format for %s/%s", name, pool)
+			}
 		}
-		if v.Installer.Backend == "" && v.Disko {
-			v.Installer.Backend = "nixos-anywhere"
-		}
-		if v.Unlock == "" && len(v.Pools) > 0 {
-			v.Unlock = "zfs"
+		for _, secret := range v.RequiredSecrets {
+			if !vars.ValidName(secret.Name) || secret.Key == "" {
+				return m, errors.Errorf("invalid required secret for %s", name)
+			}
 		}
 		m.Machines[name] = v
 	}

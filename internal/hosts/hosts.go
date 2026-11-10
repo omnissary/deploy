@@ -12,12 +12,10 @@
 //	    default: 200:dffb::1         # optional fallback for untagged operations
 //	groups:
 //	  loki-ca: [alexandria, ares]
-//
-// A flat legacy format (machine: addr at top level) is still read for backward
-// compatibility but is rewritten into the structured form on the next save.
 package hosts
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -91,8 +89,6 @@ type File struct {
 }
 
 // Load reads and parses the hosts file. Missing files are treated as empty.
-// Accepts the structured format, a tagged-address format, and the legacy flat
-// machine:addr map.
 func Load(path string) (*File, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -102,22 +98,13 @@ func Load(path string) (*File, error) {
 		return nil, errors.Wrapf(err, "read hosts file %s", path)
 	}
 
-	var structured File
-	if err := yaml.Unmarshal(data, &structured); err == nil {
-		if structured.Addresses != nil || structured.Groups != nil {
-			return normalize(&structured), nil
-		}
-	}
-
-	var legacy map[string]string
-	if err := yaml.Unmarshal(data, &legacy); err != nil {
+	var file File
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&file); err != nil {
 		return nil, errors.Wrapf(err, "parse hosts file %s", path)
 	}
-	addrs := make(map[string]*AddressEntry, len(legacy))
-	for k, v := range legacy {
-		addrs[k] = &AddressEntry{Default: v}
-	}
-	return normalize(&File{Addresses: addrs}), nil
+	return normalize(&file), nil
 }
 
 // Save writes the hosts file atomically with stable, sorted output.

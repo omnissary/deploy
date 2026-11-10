@@ -72,3 +72,11 @@ func TestResolveSecretTargetRejectsReservedMachineName(t *testing.T) {
 		t.Fatalf("expected reserved-name error, got %v", err)
 	}
 }
+
+func TestNoMigrationCommand(t *testing.T) {
+	for _, command := range New().Commands {
+		if command.Name == "migrate" {
+			t.Fatal("migration command remains registered")
+		}
+	}
+}

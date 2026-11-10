@@ -127,53 +127,14 @@ func (s Store) Certificate(id string, spec manifest.Certificate, operation strin
 		return nil, errors.New("issuer generation retired")
 	}
 	old := current(state, id)
-	adopted := false
 	var key crypto.Signer
 	if old == nil {
 		certificate, private, err := s.targetMaterial(spec.Target)
 		if err != nil {
 			return nil, err
 		}
-		if certificate != "" && private == "" {
-			return nil, errors.New("certificate exists but private key is missing; refusing replacement")
-		}
-		if private != "" {
-			key, err = ParseKey(private)
-			if err != nil {
-				return nil, err
-			}
-			if certificate != "" {
-				cert, err := ParseCert(certificate)
-				if err != nil {
-					return nil, err
-				}
-				if err := matchKey(cert, key); err != nil {
-					return nil, err
-				}
-				for _, candidate := range state.Generations {
-					issuer, err := ParseCert(candidate.Certificate)
-					if err != nil {
-						return nil, err
-					}
-					if cert.CheckSignatureFrom(issuer) == nil {
-						record := Record{
-							ID:          id,
-							Generation:  candidate.ID,
-							Serial:      cert.SerialNumber.Text(16),
-							Certificate: certificate,
-							Key:         private,
-							Spec:        spec,
-						}
-						state.Records = append(state.Records, record)
-						old = current(state, id)
-						adopted = true
-						break
-					}
-				}
-				if old == nil {
-					return nil, errors.New("existing certificate is not signed by any known issuer generation")
-				}
-			}
+		if certificate != "" || private != "" {
+			return nil, errors.New("target contains unmanaged certificate material; use pki cert import explicitly")
 		}
 	}
 	if old != nil && spec.Target.Name != "" {
@@ -242,7 +203,7 @@ func (s Store) Certificate(id string, spec manifest.Certificate, operation strin
 			if err := s.PublishRecord(state, *old); err != nil {
 				return nil, err
 			}
-			if adopted || len(state.Pending) > 0 {
+			if len(state.Pending) > 0 {
 				if err := s.Save(state); err != nil {
 					return nil, err
 				}

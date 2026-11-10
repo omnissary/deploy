@@ -11,7 +11,7 @@ import (
 	"git.tatikoma.dev/corpix/deploy/internal/nix"
 )
 
-// Evaluate public metadata once. The fallback does not depend on key-file existence.
+// Evaluate declared deployment policy.
 func loadManifest(cfg *Config) (manifest.Manifest, error) {
 	if cfg.manifestInfo != nil {
 		return cfg.manifestInfo()
@@ -45,7 +45,7 @@ func machineMetadata(cfg *Config, name string) (manifest.Machine, error) {
 		return value, nil
 	}
 	encoded, _ := json.Marshal(name)
-	expression := "flake: let m = (" + manifest.Expression + ") flake; in m // { machines = { " + string(encoded) + " = m.machines." + string(encoded) + "; }; }"
+	expression := "flake: let m = (" + manifest.Expression + ") flake; in { schemaVersion = m.schemaVersion; machines = { " + string(encoded) + " = m.machines." + string(encoded) + "; }; }"
 	raw, err := nix.EvalFlake(cfg.FlakeDir, expression)
 	if err != nil {
 		return manifest.Machine{}, err
@@ -72,7 +72,7 @@ func loadPolicyManifest(cfg *Config) (manifest.Manifest, error) {
 	if cfg.policyCache != nil {
 		return *cfg.policyCache, nil
 	}
-	raw, err := nix.EvalFlake(cfg.FlakeDir, "flake: let m = ("+manifest.Expression+") flake; in m // { machines = {}; }")
+	raw, err := nix.EvalFlake(cfg.FlakeDir, "flake: let m = ("+manifest.Expression+") flake; in { schemaVersion = m.schemaVersion; authorities = m.authorities or {}; certificates = m.certificates or {}; trust = m.trust or {}; }")
 	if err != nil {
 		return manifest.Manifest{}, err
 	}
@@ -95,7 +95,7 @@ func machineInspectCmd() *cli.Command {
 		if ctx.Bool("json") {
 			return json.NewEncoder(ctx.App.Writer).Encode(v)
 		}
-		fmt.Fprintf(ctx.App.Writer, "system: %s\ninstaller: %s\nhost key: %t\nmanaged initrd SSH: %t (port %d)\nunlock: %s\nsource: %s\n", v.System, v.Installer.Backend, v.HostKey, v.InitrdSSH, v.InitrdPort, v.Unlock, v.Source)
+		fmt.Fprintf(ctx.App.Writer, "system: %s\ninstaller: %s\nhost key: %t\nmanaged initrd SSH: %t (port %d)\nunlock: %s\n", v.System, v.Installer.Backend, v.HostKey, v.InitrdSSH, v.InitrdPort, v.Unlock)
 		return nil
 	}}
 }

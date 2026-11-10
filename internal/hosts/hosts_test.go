@@ -7,27 +7,13 @@ import (
 	"testing"
 )
 
-func TestLoadAcceptsLegacyFlatFormat(t *testing.T) {
-	t.Parallel()
-
+func TestLoadRejectsUnstructuredFormat(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hosts")
-	raw := []byte("alexandria: 10.94.10.1\nares: 200:dffb::1\n")
-	if err := os.WriteFile(path, raw, 0o644); err != nil {
-		t.Fatalf("write hosts: %v", err)
+	if err := os.WriteFile(path, []byte("machine: 192.0.2.1\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-
-	f, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got, want := f.Addresses["alexandria"].Default, "10.94.10.1"; got != want {
-		t.Fatalf("Addresses[alexandria].Default = %q want %q", got, want)
-	}
-	if got, want := f.Addresses["ares"].Default, "200:dffb::1"; got != want {
-		t.Fatalf("Addresses[ares].Default = %q want %q", got, want)
-	}
-	if len(f.Groups) != 0 {
-		t.Fatalf("Groups: expected empty, got %v", f.Groups)
+	if _, err := Load(path); err == nil {
+		t.Fatal("accepted an unsupported hosts format")
 	}
 }
 

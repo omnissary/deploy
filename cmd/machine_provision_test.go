@@ -1,13 +1,14 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"git.tatikoma.dev/corpix/deploy/internal/hosts"
 	"git.tatikoma.dev/corpix/deploy/internal/manifest"
+	"git.tatikoma.dev/corpix/deploy/internal/sops"
 	"git.tatikoma.dev/corpix/deploy/internal/sops/sopstest"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
 )
@@ -24,25 +25,25 @@ func provisionWithoutZFS(t *testing.T, cfg *Config, machine string) {
 	}
 }
 
-func TestRequireMachinesProvisionedAcceptsProvisionedMachinesWithoutDecrypting(t *testing.T) {
+func TestDeploymentCredentialsAcceptsProvisionedMachinesWithoutDecrypting(t *testing.T) {
 	af := newAdminFlake(t)
 	provisionWithoutZFS(t, af.cfg, "a")
 	provisionWithoutZFS(t, af.cfg, "b")
 	sopstest.UseIdentities(t)
 
-	if err := requireMachinesProvisioned(af.cfg, "a", "b"); err != nil {
+	if err := requireDeploymentCredentials(af.cfg, "a", "b"); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestRequireMachinesProvisionedRejectsUnprovisionedMachineAndCreatesNothing(t *testing.T) {
+func TestDeploymentCredentialsRejectsUnprovisionedMachineAndCreatesNothing(t *testing.T) {
 	af := newAdminFlake(t)
 	provisionWithoutZFS(t, af.cfg, "a")
 	conf := mustRead(t, af.cfg.SopsConf)
 
-	err := requireMachinesProvisioned(af.cfg, "a", "new")
+	err := requireDeploymentCredentials(af.cfg, "a", "new")
 	if err == nil || !strings.Contains(err.Error(), "machine provision new") ||
-		!strings.Contains(err.Error(), "vars/secrets/new.yaml") {
+		!strings.Contains(err.Error(), "vars/secrets/new/openssh/ssh_host_ed25519_key") {
 		t.Fatalf("expected hint for new, got %v", err)
 	}
 	for _, p := range vars.MachineFiles(af.cfg.FlakeDir, "new") {
@@ -55,39 +56,39 @@ func TestRequireMachinesProvisionedRejectsUnprovisionedMachineAndCreatesNothing(
 	}
 }
 
-func TestRequireMachinesProvisionedReportsSingleMissingFile(t *testing.T) {
+func TestDeploymentCredentialsReportsSingleMissingFile(t *testing.T) {
 	af := newAdminFlake(t)
 	provisionWithoutZFS(t, af.cfg, "a")
 	if err := os.Remove(vars.MachineInitrdKeyPubPath(af.cfg.FlakeDir, "a")); err != nil {
 		t.Fatal(err)
 	}
 
-	err := requireMachinesProvisioned(af.cfg, "a")
+	err := requireDeploymentCredentials(af.cfg, "a")
 	if err == nil || !strings.Contains(err.Error(), "initrd-ssh/id_ed25519.pub") || strings.Contains(err.Error(), "a.yaml") {
 		t.Fatalf("unexpected error %v", err)
 	}
 }
 
-func TestRequireMachinesProvisionedRejectsStaleRecipients(t *testing.T) {
+func TestDeploymentCredentialsRejectsStaleRecipients(t *testing.T) {
 	af := newAdminFlake(t)
 	provisionWithoutZFS(t, af.cfg, "a")
 	if err := writeGenericAdmins(af, sopstest.AddPGPKey(t)); err != nil {
 		t.Fatal(err)
 	}
 
-	err := requireMachinesProvisioned(af.cfg, "a")
+	err := requireDeploymentCredentials(af.cfg, "a")
 	if err == nil || !strings.Contains(err.Error(), "deploy sync") {
 		t.Fatalf("expected sync hint, got %v", err)
 	}
 }
 
-func TestRequireMachinesProvisionedRequiresSopsConf(t *testing.T) {
+func TestDeploymentCredentialsRequiresSopsConf(t *testing.T) {
 	af := newAdminFlake(t)
 	provisionWithoutZFS(t, af.cfg, "a")
 	if err := os.Remove(af.cfg.SopsConf); err != nil {
 		t.Fatal(err)
 	}
-	if err := requireMachinesProvisioned(af.cfg, "a"); err == nil {
+	if err := requireDeploymentCredentials(af.cfg, "a"); err == nil {
 		t.Fatal("expected error without .sops.yaml")
 	}
 }
@@ -103,7 +104,7 @@ func TestNoInitrdSSHKeysRequiredForDisabledCapability(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := requireMachinesProvisioned(af.cfg, "chip"); err != nil {
+	if err := requireDeploymentCredentials(af.cfg, "chip"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -126,68 +127,104 @@ func TestProvisionDoesNotCreateDisabledInitrdSSHKeys(t *testing.T) {
 	}
 }
 
-func TestProvisionDeclaredResourcesAndReadOnlyPrerequisites(t *testing.T) {
+func TestDeploymentChecksActualSecretsWithoutPublicOrPKIInventory(t *testing.T) {
 	af := newAdminFlake(t)
-	meta := manifest.Machine{HostKey: true, Yggdrasil: true, Certificates: []string{"client"}}
+	meta := manifest.Machine{HostKey: true, RequiredSecrets: []manifest.SecretRef{{Name: "node", Key: "yggdrasil"}, {Name: "node", Key: "certificate"}}}
 	af.cfg.machineInfo = func(string) (manifest.Machine, error) { return meta, nil }
-	spec := manifest.Certificate{
-		Issuer:  "root",
-		Subject: "client",
-		Usage:   []string{"clientAuth"},
-		Target:  manifest.Target{Name: "m", Cert: "cert", Key: "key", CA: "ca"},
-	}
-	af.cfg.manifestInfo = func() (manifest.Manifest, error) {
-		return manifest.Manifest{SchemaVersion: 1, Certificates: map[string]manifest.Certificate{"client": spec}}, nil
-	}
-	if _, err := pkiStore(af.cfg).Create("root", manifest.Authority{}); err != nil {
+	if err := provisionMachine(af.cfg, "node"); err != nil {
 		t.Fatal(err)
 	}
-	if err := provisionMachine(af.cfg, "m"); err != nil {
-		t.Fatal(err)
-	}
-	if fileExists(vars.MachineInitrdKeyPath(af.cfg.FlakeDir, "m")) {
-		t.Fatal("board gained an initrd key")
-	}
-	before, err := os.ReadFile(vars.MachineSecretsPath(af.cfg.FlakeDir, "m"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := provisionMachine(af.cfg, "m"); err != nil {
-		t.Fatal(err)
-	}
-	after, _ := os.ReadFile(vars.MachineSecretsPath(af.cfg.FlakeDir, "m"))
-	if string(before) != string(after) {
-		t.Fatal("idempotent provisioning changed credentials")
-	}
+	path := vars.MachineSecretsPath(af.cfg.FlakeDir, "node")
+	seedSecrets(t, path, map[string]string{"yggdrasil": "disposable fixture", "certificate": "disposable certificate"})
+	before := mustRead(t, path)
 	sopstest.UseIdentities(t)
-	if err := requireMachinesProvisioned(af.cfg, "m"); err != nil {
-		t.Fatalf("prerequisite check needed a decryption key: %v", err)
+	if err := requireDeploymentCredentials(af.cfg, "node"); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, mustRead(t, path)) {
+		t.Fatal("preflight modified secrets")
+	}
+	if fileExists(yggPublicPath(af.cfg, "node")) || fileExists(filepath.Join(af.cfg.FlakeDir, "vars", "admin", "pki")) {
+		t.Fatal("preflight created inventory")
 	}
 }
 
-func TestProvisionRemovesOnlyPreviouslyManagedMemberships(t *testing.T) {
+func TestStalePublicProjectionDoesNotSatisfyRequiredSecret(t *testing.T) {
 	af := newAdminFlake(t)
-	af.cfg.HostsFile = filepath.Join(af.cfg.FlakeDir, "hosts")
-	writeFlake(t, af.cfg.FlakeDir, `{ outputs = _: { nixosConfigurations.m = {}; }; }`)
-	if err := ensureSecrets(af.cfg, "m"); err != nil {
+	af.cfg.machineInfo = func(string) (manifest.Machine, error) {
+		return manifest.Machine{HostKey: true, RequiredSecrets: []manifest.SecretRef{{Name: "node", Key: "yggdrasil"}}}, nil
+	}
+	if err := provisionMachine(af.cfg, "node"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := hosts.AddMembers(af.cfg.HostsFile, "manual", []string{"m"}); err != nil {
+	public := yggPublicPath(af.cfg, "node")
+	if err := os.MkdirAll(filepath.Dir(public), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	meta := manifest.Machine{Groups: []string{"managed"}}
-	if err := provisionApplicationResources(af.cfg, "m", meta); err != nil {
+	if err := os.WriteFile(public, []byte(`{"address":"200::1"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := provisionApplicationResources(af.cfg, "m", manifest.Machine{}); err != nil {
+	if err := requireDeploymentCredentials(af.cfg, "node"); err == nil || !strings.Contains(err.Error(), "missing required secret yggdrasil") {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestTargetOwnedKeysRequireNoControllerCredentials(t *testing.T) {
+	cfg := &Config{FlakeDir: t.TempDir(), machineInfo: func(string) (manifest.Machine, error) { return manifest.Machine{}, nil }}
+	if err := provisionMachine(cfg, "board"); err != nil {
 		t.Fatal(err)
 	}
-	managed, err := hosts.GroupMembers(af.cfg.HostsFile, "managed")
-	if err != nil || len(managed) != 0 {
-		t.Fatal(managed, err)
+	if err := requireDeploymentCredentials(cfg, "board"); err != nil {
+		t.Fatal(err)
 	}
-	manual, err := hosts.GroupMembers(af.cfg.HostsFile, "manual")
-	if err != nil || len(manual) != 1 {
-		t.Fatal(manual, err)
+	files, err := os.ReadDir(cfg.FlakeDir)
+	if err != nil || len(files) != 0 {
+		t.Fatal("created controller state", err)
+	}
+}
+
+func TestProvisionDoesNotGenerateApplicationResources(t *testing.T) {
+	af := newAdminFlake(t)
+	af.cfg.machineInfo = func(string) (manifest.Machine, error) {
+		return manifest.Machine{HostKey: true, RequiredSecrets: []manifest.SecretRef{{Name: "node", Key: "yggdrasil"}}}, nil
+	}
+	if err := provisionMachine(af.cfg, "node"); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := sops.ListYAMLKeys(vars.MachineSecretsPath(af.cfg.FlakeDir, "node"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range keys {
+		if key == "yggdrasil" {
+			t.Fatal("provision generated an application identity")
+		}
+	}
+}
+
+func TestUnlockDoesNotDependOnApplicationOrHostCredentials(t *testing.T) {
+	cfg, _ := setupFlakyAgeFlake(t, "node")
+	seedSecrets(t, vars.MachineSecretsPath(cfg.FlakeDir, "node"), map[string]string{"root-key": "disposable"})
+	meta := manifest.Machine{
+		HostKey:         true,
+		InitrdSSH:       true,
+		Unlock:          "zfs",
+		Pools:           map[string]manifest.Pool{"rpool": {Secret: "root-key", Format: "hex", KeyPath: "/run/root-key"}},
+		RequiredSecrets: []manifest.SecretRef{{Name: "node", Key: "missing-application-key"}},
+	}
+	// Disable the only available decryption command before checking metadata.
+	if err := os.Unsetenv("SOPS_AGE_KEY_CMD"); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireUnlockCredentials(cfg, "node", meta); err != nil {
+		t.Fatal(err)
+	}
+	meta.Pools["rpool"] = manifest.Pool{Secret: "missing-root-key", Format: "hex", KeyPath: "/run/root-key"}
+	if err := requireUnlockCredentials(cfg, "node", meta); err == nil {
+		t.Fatal("accepted missing storage key")
+	}
+	meta.Unlock = "luks"
+	if err := requireUnlockCredentials(cfg, "node", meta); err != nil {
+		t.Fatal("interactive unlock required controller credentials", err)
 	}
 }

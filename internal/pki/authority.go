@@ -10,25 +10,10 @@ import (
 
 	"git.tatikoma.dev/corpix/atlas/errors"
 	"git.tatikoma.dev/corpix/deploy/internal/manifest"
-	"git.tatikoma.dev/corpix/deploy/internal/sops"
 )
 
 func (s Store) signer(g *Generation) (crypto.Signer, error) {
 	value := g.Key
-	if g.Source != nil {
-		path, err := s.TargetPath(*g.Source)
-		if err != nil {
-			return nil, err
-		}
-		file, err := sops.Open(path)
-		if err != nil {
-			return nil, err
-		}
-		value, err = file.Get(g.Source.Key)
-		if err != nil {
-			return nil, err
-		}
-	}
 	if value == "" {
 		return nil, errors.New("authority is public-only; no local signer")
 	}
@@ -157,9 +142,6 @@ func (s Store) Create(id string, policy manifest.Authority) (*State, error) {
 	if s.Exists(id) {
 		return nil, errors.New("authority already exists; use renew or rotate")
 	}
-	if policy.Source != nil {
-		return nil, errors.New("authority declares existing signing material; use ca import")
-	}
 
 	key, err := newKey(policy.Algorithm)
 	if err != nil {
@@ -191,25 +173,7 @@ func (s Store) ImportAuthority(id string, policy manifest.Authority, certificate
 	if s.Exists(id) {
 		return nil, errors.New("authority already exists")
 	}
-	if policy.Source != nil {
-		path, err := s.TargetPath(*policy.Source)
-		if err != nil {
-			return nil, err
-		}
-		file, err := sops.Open(path)
-		if err != nil {
-			return nil, err
-		}
-		certificate, err = file.Get(policy.Source.Cert)
-		if err != nil {
-			return nil, err
-		}
-		private, err = file.Get(policy.Source.Key)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if private == "" && policy.Source == nil {
+	if private == "" {
 		if value, err := s.RequestKey(id); err == nil {
 			private = value
 		}
@@ -230,10 +194,7 @@ func (s Store) ImportAuthority(id string, policy manifest.Authority, certificate
 			return nil, err
 		}
 	}
-	g := Generation{ID: 1, Certificate: certificate, Key: private, Source: policy.Source}
-	if g.Source != nil {
-		g.Key = ""
-	}
+	g := Generation{ID: 1, Certificate: certificate, Key: private}
 	if policy.Issuer != "" {
 		parent, err := s.Open(policy.Issuer)
 		if err != nil {
@@ -483,33 +444,20 @@ func (s Store) publishAuthority(state *State) error {
 		return nil
 	}
 	t := *state.Policy.Target
-	// Preserve any signer whose old source is about to be replaced by publication.
-	for i := range state.Generations {
-		g := &state.Generations[i]
-		if g.Source != nil && g.Source.Name == t.Name && g.Source.Group == t.Group && g.Source.Key == t.Key {
-			key, err := s.signer(g)
-			if err != nil {
-				return err
-			}
-			private, err := keyPEM(key)
-			if err != nil {
-				return err
-			}
-			g.Key = private
-			g.Source = nil
-		}
-	}
 	g, err := generation(state, state.Active)
 	if err != nil {
 		return err
 	}
-	key, err := s.signer(g)
-	if err != nil {
-		return err
-	}
-	private, err := keyPEM(key)
-	if err != nil {
-		return err
+	private := ""
+	if t.Key != "" {
+		key, err := s.signer(g)
+		if err != nil {
+			return err
+		}
+		private, err = keyPEM(key)
+		if err != nil {
+			return err
+		}
 	}
 	chain := g.Certificate
 	if g.Issuer != "" {

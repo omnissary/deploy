@@ -16,7 +16,7 @@ func GenerateStorageKey(format string) (string, error) {
 		return "", err
 	}
 	switch format {
-	case "hex", "":
+	case "hex":
 		return hex.EncodeToString(key), nil
 	case "passphrase":
 		return base64.RawURLEncoding.EncodeToString(key), nil
@@ -34,7 +34,7 @@ func StorageKeyBytes(pool Pool, value string) ([]byte, error) {
 			return nil, errors.New("raw ZFS key must contain base64-encoded 32-byte material")
 		}
 		return data, nil
-	case "hex", "":
+	case "hex":
 		key, err := hex.DecodeString(strings.TrimSpace(value))
 		if err != nil || len(key) != 32 {
 			return nil, errors.New("hex ZFS key must be 64 hexadecimal characters")

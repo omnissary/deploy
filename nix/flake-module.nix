@@ -5,8 +5,11 @@ in
 {
   options.deploy = mkOption {
     type = types.attrs;
-    default = { };
-    description = "Versioned public deploy policy; validated against the Go metadata contract.";
+    default = {
+      schemaVersion = 2;
+      machines = { };
+    };
+    description = "Explicit machine capabilities and credential resource policies.";
   };
   config.flake.deploy = import ./resolve.nix {
     nixosConfigurations = config.flake.nixosConfigurations or { };

@@ -18,16 +18,18 @@ in
     };
   };
   deploy = {
-    schemaVersion = 1;
+    schemaVersion = 2;
     machines.target = {
+      inherit system;
+      hostKey = true;
       rootFS = "zfs";
-      disko = true;
       initrdSSH = true;
       initrdPort = 2222;
       unlock = "zfs";
       installer.backend = "nixos-anywhere";
       pools.rpool = {
         inherit keyPath;
+        secret = "rpool-root-key";
         format = "hex";
       };
     };

@@ -45,3 +45,13 @@ func repositoryMutation(action cli.ActionFunc) cli.ActionFunc {
 		return action(ctx)
 	}
 }
+
+func installationAction(action cli.ActionFunc) cli.ActionFunc {
+	mutate := repositoryMutation(action)
+	return func(ctx *cli.Context) error {
+		if ctx.Bool("build-only") {
+			return action(ctx)
+		}
+		return mutate(ctx)
+	}
+}

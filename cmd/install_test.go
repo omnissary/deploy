@@ -12,8 +12,7 @@ func TestInstallerCapabilities(t *testing.T) {
 		backend string
 		valid   bool
 	}{
-		{manifest.Machine{Disko: true}, "nixos-anywhere", true},
-		{manifest.Machine{}, "nixos-anywhere", false},
+		{manifest.Machine{}, "nixos-anywhere", true},
 		{manifest.Machine{Installer: manifest.Installer{Attribute: "config.system.build.nandFlash"}}, "executable", true},
 		{manifest.Machine{}, "executable", false},
 		{manifest.Machine{}, "unsupported", false},

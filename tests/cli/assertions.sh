@@ -1,20 +1,40 @@
 # shellcheck shell=bash
 set -euo pipefail
+command deploy --flake "$TEST_REPO" machine build node >system-path
+command deploy --flake "$TEST_REPO" machine eval node fixtureValue | jq -e '. == "node"'
+command deploy --flake "$TEST_REPO" machine audit node
+command deploy --flake "$TEST_REPO" machine init --build-only board >board-artifact
+test ! -e "$TEST_REPO/.sops.yaml"
+test ! -e "$TEST_REPO/vars/secrets/node.yaml"
 # shellcheck source=../lib/setup.sh
 source "$TEST_SETUP"
 
-expect_failure 'explicit authority prerequisite' 'no such file' deploy machine provision node
-test ! -e "$TEST_REPO/vars/admin/pki/root.yaml"
-deploy pki ca create root >root-created.json
 deploy machine provision node board
+test ! -e "$TEST_REPO/vars/admin/pki"
+test ! -e "$TEST_REPO/vars/public/node/yggdrasil.json"
+test ! -e "$TEST_REPO/vars/secrets/board.yaml"
+expect_failure 'explicit runtime requirements' 'missing required secret yggdrasil' deploy machine deploy node
+deploy key yggdrasil ensure node
+deploy key yggdrasil show --json node | jq -e '.address and .publicKey'
+rm "$TEST_REPO/vars/public/node/yggdrasil.json"
+printf fixture-cert | deploy secret set node tls-cert
+printf fixture-key | deploy secret set node tls-key
+find "$TEST_REPO/vars" -type f -print0 | sort -z | xargs -0 sha256sum >before-read-only
+expect_failure 'deployment does not need public or CA inventory' 'no host registered' deploy machine deploy node
+sha256sum --check before-read-only
+test ! -e "$TEST_REPO/vars/admin/pki"
+deploy secret del node tls-cert
+deploy secret del node tls-key
+expect_failure 'explicit authority prerequisite' 'no such file' deploy pki cert ensure node-client
+deploy pki ca create root >root-created.json
+deploy pki cert ensure node-client
 
+deploy group create clients
+deploy group add clients node
 cd "$TEST_REPO" || exit 1
 test ! -e vars/secrets/board/initrd-ssh/id_ed25519
 test ! -e vars/secrets/node/initrd-ssh/id_ed25519
 deploy machine inspect --json board | jq -e '.rootFS == "ubifs" and .initrdSSH == false and .installer.backend == "executable"'
-deploy key yggdrasil show --json node | jq -e '.address and .publicKey'
-deploy host get node | grep -F "$(jq -r .address vars/public/node/yggdrasil.json)"
-deploy group show clients | grep -F node
 find vars -type f -print0 | sort -z | xargs -0 sha256sum >before-provision
 deploy machine provision node board
 sha256sum --check before-provision
@@ -94,3 +114,14 @@ expect_failure 'corrupt identity is preserved' 'invalid Yggdrasil' deploy key yg
 sha256sum --check before-invalid
 # Public inventory must never contain private PEM material.
 if grep -R 'PRIVATE KEY' vars/pki vars/public; then echo 'ASSERT FAIL: public projection exposed a key' >&2; exit 1; fi
+
+# Import accepts a private key through stdin and returns only public inventory.
+openssl genpkey -algorithm ED25519 -out import-key.pem
+openssl req -new -x509 -key import-key.pem -out import-ca.pem -days 30 \
+  -subj /CN=Streamed-test-issuer \
+  -addext basicConstraints=critical,CA:TRUE \
+  -addext keyUsage=critical,keyCertSign,cRLSign
+printf '{"subject":"Streamed-test-issuer"}' >import-policy.json
+expect_failure 'ambiguous import input' 'only one import input' deploy pki ca import --spec import-policy.json --cert-file - --key-file - ambiguous
+cat import-key.pem | deploy pki ca import --spec import-policy.json --cert-file import-ca.pem --key-file - streamed >imported-public.json
+if grep -F 'PRIVATE KEY' imported-public.json; then echo 'ASSERT FAIL: import exposed private material' >&2; exit 1; fi

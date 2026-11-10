@@ -1,29 +1,84 @@
 package manifest
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
-func TestCapabilities(t *testing.T) {
-	for _, tc := range []struct {
-		json string
-		bad  bool
-	}{
-		{`{"schemaVersion":99}`, true},
-		{
-			`{"schemaVersion":1,"machines":{"chip":{"system":"armv7l-linux","hostKey":true,"initrdSSH":false,"installer":{"backend":"executable","attribute":"config.system.build.nandFlash"}}}}`,
-			false,
-		},
-		{`{"schemaVersion":1,"machines":{"zfs":{"disko":true,"pools":{"rpool":{"keyPath":"/run/zfs-keys/rpool.key"}}}}}`, false},
-		{`{"schemaVersion":1,"machines":{"bad":{"pools":{"rpool":{"keyPath":"relative"}}}}}`, true},
+func TestPolicyContract(t *testing.T) {
+	machine := Machine{
+		System:          "x86_64-linux",
+		HostKey:         true,
+		InitrdSSH:       true,
+		InitrdPort:      6666,
+		Unlock:          "zfs",
+		Pools:           map[string]Pool{"rpool": {KeyPath: "/run/keys/root", Secret: "root-key", Format: "raw"}},
+		RequiredSecrets: []SecretRef{{Name: "service", Group: true, Key: "client-cert"}},
+	}
+	policy := Manifest{SchemaVersion: Version, Machines: map[string]Machine{"server": machine}}
+	data, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := Decode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Machines["server"].Pools["rpool"].Secret != "root-key" {
+		t.Fatal("explicit storage binding changed")
+	}
+}
+
+func TestRejectUnsupportedPolicies(t *testing.T) {
+	for _, data := range []string{
+		`{"schemaVersion":1}`,
+		`{"schemaVersion":2,"machines":{"node":{"system":"x86_64-linux","yggdrasil":true}}}`,
+		`{"schemaVersion":2,"machines":{"node":{}}}`,
+		`{"schemaVersion":2,"machines":{"node":{"system":"x86_64-linux","unlock":"zfs"}}}`,
+		`{
+  "schemaVersion": 2,
+  "machines": {
+    "node": {
+      "system": "x86_64-linux",
+      "pools": {
+        "rpool": {
+          "keyPath": "relative",
+          "secret": "key",
+          "format": "hex"
+        }
+      }
+    }
+  }
+}`,
+		`{"schemaVersion":2,"authorities":{"root":{"source":{"name":"old"}}}}`,
+		`{"schemaVersion":2} {}`,
 	} {
-		m, err := Decode([]byte(tc.json))
-		if (err != nil) != tc.bad {
-			t.Fatalf("%s: %v", tc.json, err)
+		if _, err := Decode([]byte(data)); err == nil {
+			t.Fatalf("accepted invalid policy: %s", data)
 		}
-		if v, ok := m.Machines["chip"]; ok && v.InitrdSSH {
-			t.Fatal("CHIP gained initrd SSH")
-		}
-		if v, ok := m.Machines["zfs"]; ok && (v.Installer.Backend != "nixos-anywhere" || v.Pools["rpool"].Secret != "rpool-root-key") {
-			t.Fatal(v)
+	}
+}
+
+func TestStoragePolicyRequiresExplicitSecretAndFormat(t *testing.T) {
+	for _, field := range []string{`"secret": "key",`, `"format": "hex",`} {
+		document := `{
+  "schemaVersion": 2,
+  "machines": {
+    "node": {
+      "system": "x86_64-linux",
+      "pools": {
+        "rpool": {
+          "secret": "key",
+          "format": "hex",
+          "keyPath": "/run/key"
+        }
+      }
+    }
+  }
+}`
+		if _, err := Decode([]byte(strings.Replace(document, field, "", 1))); err == nil {
+			t.Fatal("accepted incomplete storage binding")
 		}
 	}
 }

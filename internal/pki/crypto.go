@@ -361,7 +361,7 @@ func matchesPolicy(cert *x509.Certificate, spec manifest.Certificate, now time.T
 	return true
 }
 
-// RFC 5280 method 1 key identifier, needed for imported legacy CA certificates
+// Compute the RFC 5280 method 1 key identifier.
 // without an SKI extension when signing a CRL. This does not change their DER.
 func issuerKeyID(cert *x509.Certificate) error {
 	if len(cert.SubjectKeyId) > 0 {

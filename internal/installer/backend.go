@@ -39,12 +39,7 @@ func (r Registry) Resolve(name string) (Backend, error) {
 
 type Anywhere struct{}
 
-func (Anywhere) Validate(m manifest.Machine) error {
-	if !m.Disko {
-		return errors.New("nixos-anywhere requires a declared diskoScript")
-	}
-	return nil
-}
+func (Anywhere) Validate(manifest.Machine) error { return nil }
 
 func (Anywhere) Artifacts(manifest.Machine) []string {
 	return []string{"config.system.build.toplevel", "config.system.build.diskoScript"}

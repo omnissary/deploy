@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"git.tatikoma.dev/corpix/deploy/internal/agekey"
+	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
 )
@@ -112,7 +113,7 @@ func TestEnsureZFSPoolKeysKeepsExistingKeyOnTransientDecryptFailure(t *testing.T
 	seedSecrets(t, path, map[string]string{"other": "unrelated"})
 
 	armFailures(1)
-	_ = ensureZFSPoolKeys(path, machine, []string{"tank"})
+	_ = ensureTestPoolKeys(path, machine, []string{"tank"})
 
 	if got := readSecret(t, path, "tank-root-key"); got != original {
 		t.Fatalf("existing ZFS root key was replaced:\n got  %s\n want %s", got, original)
@@ -127,7 +128,7 @@ func TestEnsureZFSPoolKeysReportsDecryptFailureWithoutWriting(t *testing.T) {
 	before := fileBytes(t, path)
 
 	armFailures(1000)
-	if err := ensureZFSPoolKeys(path, machine, []string{"tank", "new"}); err == nil {
+	if err := ensureTestPoolKeys(path, machine, []string{"tank", "new"}); err == nil {
 		t.Fatal("expected an error when the secrets file cannot be decrypted")
 	}
 	if fileBytes(t, path) != before {
@@ -139,13 +140,14 @@ func TestEnsureZFSPoolKeysCreatesOnlyMissingKeys(t *testing.T) {
 	const machine = "m"
 	cfg, _ := setupFlakyAgeFlake(t, machine)
 	path := vars.MachineSecretsPath(cfg.FlakeDir, machine)
-	seedSecrets(t, path, map[string]string{"tank-root-key": "original", "other": "x"})
+	const original = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+	seedSecrets(t, path, map[string]string{"tank-root-key": original, "other": "x"})
 
-	if err := ensureZFSPoolKeys(path, machine, []string{"tank", "data", "backup"}); err != nil {
+	if err := ensureTestPoolKeys(path, machine, []string{"tank", "data", "backup"}); err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
 
-	if got := readSecret(t, path, "tank-root-key"); got != "original" {
+	if got := readSecret(t, path, "tank-root-key"); got != original {
 		t.Fatalf("existing key replaced: %q", got)
 	}
 	if got := readSecret(t, path, "other"); got != "x" {
@@ -167,11 +169,11 @@ func TestEnsureZFSPoolKeysIsIdempotent(t *testing.T) {
 	cfg, _ := setupFlakyAgeFlake(t, machine)
 	path := vars.MachineSecretsPath(cfg.FlakeDir, machine)
 
-	if err := ensureZFSPoolKeys(path, machine, []string{"tank"}); err != nil {
+	if err := ensureTestPoolKeys(path, machine, []string{"tank"}); err != nil {
 		t.Fatal(err)
 	}
 	before := fileBytes(t, path)
-	if err := ensureZFSPoolKeys(path, machine, []string{"tank"}); err != nil {
+	if err := ensureTestPoolKeys(path, machine, []string{"tank"}); err != nil {
 		t.Fatal(err)
 	}
 	if fileBytes(t, path) != before {
@@ -186,10 +188,22 @@ func TestEnsureZFSPoolKeysWithoutPoolsDoesNotDecrypt(t *testing.T) {
 	before := fileBytes(t, path)
 
 	armFailures(1000)
-	if err := ensureZFSPoolKeys(path, machine, nil); err != nil {
+	if err := ensureTestPoolKeys(path, machine, nil); err != nil {
 		t.Fatalf("expected no decryption without pools, got %v", err)
 	}
 	if fileBytes(t, path) != before {
 		t.Fatal("file modified")
 	}
+}
+
+func ensureTestPoolKeys(path, machine string, names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	pools := map[string]manifest.Pool{}
+	for _, name := range names {
+		pools[name] = manifest.Pool{Secret: name + "-root-key", Format: "hex", KeyPath: "/run/keys/" + name}
+	}
+	cfg := &Config{FlakeDir: filepath.Dir(filepath.Dir(filepath.Dir(path))), machineInfo: func(string) (manifest.Machine, error) { return manifest.Machine{Pools: pools}, nil }}
+	return ensureZFSKey(cfg, machine)
 }

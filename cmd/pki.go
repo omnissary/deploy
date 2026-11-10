@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,10 @@ func pkiStore(cfg *Config) pki.Store { return pki.Store{Root: cfg.FlakeDir, Conf
 func readOptional(path string) (string, error) {
 	if path == "" {
 		return "", nil
+	}
+	if path == "-" {
+		data, err := io.ReadAll(os.Stdin)
+		return string(data), err
 	}
 	data, err := os.ReadFile(path)
 	return string(data), err
@@ -154,8 +159,8 @@ func pkiFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.PathFlag{Name: "spec", Usage: "public JSON policy (no Nix evaluation)"},
 		&cli.StringFlag{Name: "issuer"},
-		&cli.PathFlag{Name: "cert-file"},
-		&cli.PathFlag{Name: "key-file"},
+		&cli.PathFlag{Name: "cert-file", Usage: "certificate PEM file, or - for stdin"},
+		&cli.PathFlag{Name: "key-file", Usage: "private key PEM file, or - for stdin"},
 		&cli.PathFlag{Name: "csr-file"},
 		&cli.PathFlag{Name: "out"},
 		&cli.IntFlag{Name: "generation"},
@@ -221,11 +226,7 @@ func pkiCmd() *cli.Command {
 				if verb == "create" {
 					_, err = store.Create(id, spec)
 				} else {
-					cert, e := readOptional(ctx.String("cert-file"))
-					if e != nil {
-						return e
-					}
-					key, e := readOptional(ctx.String("key-file"))
+					cert, key, e := readImportInputs(ctx.String("cert-file"), ctx.String("key-file"))
 					if e != nil {
 						return e
 					}
@@ -313,11 +314,7 @@ func pkiCmd() *cli.Command {
 				}
 				return publicOutput(ctx, pki.PublicRecord(r))
 			case "import":
-				value, e := readOptional(ctx.String("cert-file"))
-				if e != nil {
-					return e
-				}
-				private, e := readOptional(ctx.String("key-file"))
+				value, private, e := readImportInputs(ctx.String("cert-file"), ctx.String("key-file"))
 				if e != nil {
 					return e
 				}
@@ -510,4 +507,16 @@ func pkiCmd() *cli.Command {
 		return publicOutput(ctx, states)
 	}}}
 	return root
+}
+
+func readImportInputs(certPath, keyPath string) (string, string, error) {
+	if certPath == "-" && keyPath == "-" {
+		return "", "", errors.New("only one import input may use stdin")
+	}
+	certificate, err := readOptional(certPath)
+	if err != nil {
+		return "", "", err
+	}
+	private, err := readOptional(keyPath)
+	return certificate, private, err
 }

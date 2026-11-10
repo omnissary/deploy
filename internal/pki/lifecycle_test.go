@@ -283,7 +283,7 @@ func TestEmptyNixSANListsAreIdempotent(t *testing.T) {
 	}
 }
 
-func TestAdoptExistingCertificateChainWithoutReissue(t *testing.T) {
+func TestExplicitImportPreservesCertificateAndKey(t *testing.T) {
 	s := fixture(t)
 	s.Create("root", manifest.Authority{})
 	spec := leaf()
@@ -303,14 +303,25 @@ func TestAdoptExistingCertificateChainWithoutReissue(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec.Target = target
-	adopted, err := s.Certificate("adopted", spec, "ensure", false)
+	before, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if adopted.Certificate != issued.Certificate || adopted.Key != issued.Key {
-		t.Fatal("adoption changed identity")
+	if _, err := s.Certificate("imported", spec, "ensure", false); err == nil {
+		t.Fatal("accepted unmanaged material")
 	}
-	if _, err := s.Certificate("adopted", spec, "ensure", false); err != nil {
+	after, _ := os.ReadFile(path)
+	if string(before) != string(after) {
+		t.Fatal("rejected ensure changed consumer material")
+	}
+	imported, err := s.ImportCertificate("imported", spec, issued.Certificate, issued.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if imported.Certificate != issued.Certificate || imported.Key != issued.Key {
+		t.Fatal("import changed identity")
+	}
+	if _, err := s.Certificate("imported", spec, "ensure", false); err != nil {
 		t.Fatal(err)
 	}
 	file, _ := sops.Open(path)
@@ -353,8 +364,8 @@ func TestRenewImportedAuthorityPreservesDistinguishedName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	template.Subject.Organization = []string{"legacy organization"}
-	template.Subject.ExtraNames = []pkix.AttributeTypeAndValue{{Type: asn1.ObjectIdentifier{0, 9, 2342, 19200300, 100, 1, 1}, Value: "legacy-root"}}
+	template.Subject.Organization = []string{"Imported organization"}
+	template.Subject.ExtraNames = []pkix.AttributeTypeAndValue{{Type: asn1.ObjectIdentifier{0, 9, 2342, 19200300, 100, 1, 1}, Value: "imported-root"}}
 	cert, err := sign(template, template, key.Public(), key, s.now())
 	if err != nil {
 		t.Fatal(err)

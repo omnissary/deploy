@@ -1,6 +1,7 @@
 package pki
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"git.tatikoma.dev/corpix/atlas/errors"
@@ -18,16 +20,15 @@ import (
 )
 
 type Generation struct {
-	NotAfter         time.Time        `json:"notAfter"`
-	Source           *manifest.Target `json:"source,omitempty"`
-	Fingerprint      string           `json:"fingerprint"`
-	Certificate      string           `json:"certificate"`
-	Key              string           `json:"key,omitempty"`
-	Issuer           string           `json:"issuer,omitempty"`
-	Revisions        []string         `json:"revisions,omitempty"`
-	ID               int              `json:"id"`
-	IssuerGeneration int              `json:"issuerGeneration,omitempty"`
-	Retired          bool             `json:"retired"`
+	NotAfter         time.Time `json:"notAfter"`
+	Fingerprint      string    `json:"fingerprint"`
+	Certificate      string    `json:"certificate"`
+	Key              string    `json:"key,omitempty"`
+	Issuer           string    `json:"issuer,omitempty"`
+	Revisions        []string  `json:"revisions,omitempty"`
+	ID               int       `json:"id"`
+	IssuerGeneration int       `json:"issuerGeneration,omitempty"`
+	Retired          bool      `json:"retired"`
 }
 type Record struct {
 	NotAfter    time.Time            `json:"notAfter"`
@@ -59,7 +60,6 @@ type State struct {
 	CRLNumbers  map[int]int64      `json:"crlNumbers"`
 	ID          string             `json:"id"`
 	StoreHash   string             `json:"storeHash,omitempty"`
-	Warnings    []string           `json:"warnings,omitempty"`
 	Revocations []Revocation       `json:"revocations,omitempty"`
 	Generations []Generation       `json:"generations"`
 	Records     []Record           `json:"records"`
@@ -121,7 +121,9 @@ func (s Store) Load(id string) (*State, error) {
 		return nil, err
 	}
 	var state State
-	if err := json.Unmarshal([]byte(value), &state); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(value))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&state); err != nil {
 		return nil, err
 	}
 	if state.ID != id {
@@ -195,14 +197,6 @@ func (s Store) publish(state *State) error {
 		r.Fingerprint = fingerprint(cert)
 		view.Records[i].Key = ""
 	}
-	seenSerials := map[string]string{}
-	for _, record := range view.Records {
-		k := fmt.Sprintf("%d:%s", record.Generation, record.Serial)
-		if fp, ok := seenSerials[k]; ok && fp != record.Fingerprint {
-			view.Warnings = append(view.Warnings, "legacy issuer serial reused: "+k+"; revocation affects every matching certificate")
-		}
-		seenSerials[k] = record.Fingerprint
-	}
 	view.Incomplete = len(view.Pending) > 0
 	view.Pending = nil
 	view.StoreHash, err = digestFile(s.privatePath(state.ID))
@@ -224,6 +218,9 @@ func (s Store) publish(state *State) error {
 // publishing any consumer bundles. Callers serialize mutations with repolock.
 func (s Store) Save(state *State) error {
 	if err := validID(state.ID); err != nil {
+		return err
+	}
+	if err := validateSerials(state); err != nil {
 		return err
 	}
 	if err := s.writePrivate(state); err != nil {
@@ -281,7 +278,9 @@ func (s Store) Public(id string) (*State, error) {
 		return nil, err
 	}
 	var state State
-	if err := json.Unmarshal(data, &state); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&state); err != nil {
 		return nil, err
 	}
 	hash, err := digestFile(s.privatePath(id))
@@ -318,4 +317,21 @@ func generation(state *State, id int) (*Generation, error) {
 		}
 	}
 	return nil, errors.Errorf("unknown generation %d", id)
+}
+
+func validateSerials(state *State) error {
+	seen := map[string]string{}
+	for _, record := range state.Records {
+		cert, err := ParseCert(record.Certificate)
+		if err != nil {
+			return err
+		}
+		key := fmt.Sprintf("%d:%s", record.Generation, cert.SerialNumber.Text(16))
+		fp := fingerprint(cert)
+		if previous, ok := seen[key]; ok && previous != fp {
+			return errors.New("issuer reused a certificate serial")
+		}
+		seen[key] = fp
+	}
+	return nil
 }

@@ -1,151 +1,57 @@
 package cmd
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
-	"sort"
-
 	"git.tatikoma.dev/corpix/atlas/errors"
-	"git.tatikoma.dev/corpix/deploy/internal/atomicfile"
-	"git.tatikoma.dev/corpix/deploy/internal/hosts"
 	"git.tatikoma.dev/corpix/deploy/internal/manifest"
 	"git.tatikoma.dev/corpix/deploy/internal/sops"
 	"git.tatikoma.dev/corpix/deploy/internal/vars"
 )
 
-func provisionApplicationResources(cfg *Config, machine string, meta manifest.Machine) error {
-	if cfg.HostsFile == "" && len(meta.Groups)+len(meta.Addresses) == 0 && !meta.Yggdrasil && len(meta.Certificates) == 0 {
-		return nil
-	}
-	groupPath := vars.PublicResourcePath(cfg.FlakeDir, machine, "memberships.json")
-	var previous []string
-	data, readErr := os.ReadFile(groupPath)
-	if readErr == nil {
-		if err := json.Unmarshal(data, &previous); err != nil {
-			return err
+func requireSecrets(cfg *Config, references []manifest.SecretRef) error {
+	for _, ref := range references {
+		path := vars.MachineSecretsPath(cfg.FlakeDir, ref.Name)
+		if ref.Group {
+			path = vars.SharedSecretsPath(cfg.FlakeDir, ref.Name)
 		}
-	} else if !os.IsNotExist(readErr) {
-		return readErr
-	}
-	desired := map[string]bool{}
-	for _, group := range meta.Groups {
-		if _, err := requireGroupName(cfg, group); err != nil {
-			return err
-		}
-		desired[group] = true
-	}
-	for _, group := range previous {
-		if desired[group] {
-			continue
-		}
-		exists, err := hosts.HasGroup(cfg.HostsFile, group)
+		keys, err := sops.ListYAMLKeys(path)
 		if err != nil {
-			return err
+			return errors.Wrapf(err, "required secret %s/%s", ref.Name, ref.Key)
 		}
-		if exists {
-			if _, err := hosts.RemoveMembers(cfg.HostsFile, group, []string{machine}); err != nil {
-				return err
+		found := false
+		for _, key := range keys {
+			if key == ref.Key {
+				found = true
+				break
 			}
 		}
-	}
-	for _, group := range meta.Groups {
-		if _, err := hosts.AddMembers(cfg.HostsFile, group, []string{machine}); err != nil {
-			return err
-		}
-	}
-	if len(previous)+len(meta.Groups) > 0 {
-		if err := syncAllRecipients(cfg); err != nil {
-			return err
-		}
-		if err := os.MkdirAll(filepath.Dir(groupPath), 0o755); err != nil {
-			return err
-		}
-		snapshot, _ := json.Marshal(meta.Groups)
-		if err := atomicfile.Write(groupPath, append(snapshot, '\n'), 0o644); err != nil {
-			return err
-		}
-	}
-	for tag, address := range meta.Addresses {
-		if tag == "default" {
-			tag = ""
-		}
-		if err := hosts.SetAddress(cfg.HostsFile, machine, tag, address); err != nil {
-			return err
-		}
-	}
-	if meta.Yggdrasil {
-		if _, err := provisionYggdrasil(cfg, machine, meta, false); err != nil {
-			return err
-		}
-	}
-	if len(meta.Certificates) > 0 {
-		m, err := loadPolicyManifest(cfg)
-		if err != nil {
-			return err
-		}
-		names := append([]string{}, meta.Certificates...)
-		sort.Strings(names)
-		for _, name := range names {
-			spec, ok := m.Certificates[name]
-			if !ok {
-				return errors.Errorf("undeclared certificate %s", name)
-			}
-			if spec.Target.Group {
-				target, err := resolveSecretTarget(cfg, spec.Target.Name)
-				if err != nil {
-					return err
-				}
-				if err := prepareSecretFile(cfg, target); err != nil {
-					return err
-				}
-			}
-			if _, err := pkiStore(cfg).Certificate(name, spec, "ensure", false); err != nil {
-				return err
-			}
+		if !found {
+			return errors.Errorf("missing required secret %s in %s", ref.Key, relToFlake(cfg, path))
 		}
 	}
 	return nil
 }
 
-// Required runtime material is checked by key names and public projections only.
-// Key matching and decryption remain explicit verification/provisioning work.
-func requireApplicationResources(cfg *Config, machine string, meta manifest.Machine) error {
-	if meta.Yggdrasil && !fileExists(yggPublicPath(cfg, machine)) {
-		return errors.Errorf("missing public Yggdrasil identity; run 'deploy machine provision %s'", machine)
+func storageSecrets(machine string, meta manifest.Machine) []manifest.SecretRef {
+	references := make([]manifest.SecretRef, 0, len(meta.Pools))
+	for _, pool := range meta.Pools {
+		references = append(references, manifest.SecretRef{Name: machine, Key: pool.Secret})
 	}
-	if len(meta.Certificates) == 0 {
+	return references
+}
+
+func requireUnlockCredentials(cfg *Config, machine string, meta manifest.Machine) error {
+	if !meta.InitrdSSH {
+		return errors.New("machine has no managed initrd SSH capability")
+	}
+	switch meta.Unlock {
+	case "luks":
 		return nil
+	case "zfs":
+		if len(meta.Pools) == 0 {
+			return errors.New("no encrypted ZFS pools declared")
+		}
+		return requireSecrets(cfg, storageSecrets(machine, meta))
+	default:
+		return errors.New("no supported unlock capability declared")
 	}
-	m, err := loadPolicyManifest(cfg)
-	if err != nil {
-		return err
-	}
-	for _, name := range meta.Certificates {
-		spec, ok := m.Certificates[name]
-		if !ok {
-			return errors.Errorf("undeclared certificate %s", name)
-		}
-		if spec.Target.Name == "" {
-			continue
-		}
-		path, err := pkiStore(cfg).TargetPath(spec.Target)
-		if err != nil {
-			return err
-		}
-		keys, err := sops.ListYAMLKeys(path)
-		if err != nil {
-			return err
-		}
-		present := map[string]bool{}
-		for _, key := range keys {
-			present[key] = true
-		}
-		for _, key := range []string{spec.Target.Cert, spec.Target.Key, spec.Target.Chain, spec.Target.CA} {
-			if key != "" && !present[key] {
-				return errors.Errorf("missing certificate bundle %s; run 'deploy machine provision %s'", name, machine)
-			}
-		}
-	}
-	return nil
 }

@@ -8,8 +8,9 @@ in
     system.build.toplevel = prebuilt toplevel;
   };
   deploy = {
-    schemaVersion = 1;
+    schemaVersion = 2;
     machines.target = {
+      inherit system;
       hostKey = true;
       initrdSSH = false;
     };
