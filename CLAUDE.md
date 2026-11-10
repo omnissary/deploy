@@ -118,6 +118,8 @@ betteralign, gofumpt, and patched goimports with `git.tatikoma.dev/` as the loca
 import prefix. Keep long configuration literals and callbacks on multiple lines;
 the formatters do not automatically wrap them. Format only deploy's own sources,
 leaving vendor and reactor-ca untouched.
+Use the declared Go package name for imports. Add an import alias only to resolve
+a real name collision. Do not invent aliases based on the repository name.
 
 Declare repository mutations explicitly with `repositoryMutation` beside their
 command actions. Generated operations use `commandOperation` and
