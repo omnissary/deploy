@@ -1,4 +1,4 @@
-# Resolve one machine lazily so unrelated configurations are never evaluated.
+# Build deployment metadata from flake.deploy and flake.nixosConfigurations.
 flake:
 let
   inherit (builtins)
