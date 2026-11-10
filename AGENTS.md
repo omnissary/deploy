@@ -6,11 +6,11 @@
 go build ./...                         # compile
 go test ./...                          # all tests
 go test ./internal/hosts/...           # single package
-go test ./cmd/... -run TestMigrate     # single test
+go test ./cmd/... -run TestProvision   # single test
 nix build                              # wrapped binary (adds nix, openssh, cpio, ssh-to-age, nixos-anywhere to PATH)
 nix develop                            # pinned development tools
 just lint                              # ShellCheck project shell scripts
-just test                              # packaged CLI and metadata compatibility
+just test                              # packaged CLI and policy contract
 just test-e2e                          # SSH deployment and encrypted-ZFS installation VMs
 ```
 
@@ -31,7 +31,6 @@ internal/
   keypair/               Ensure for encrypted-private/plaintext-public key pairs (never regenerates)
   vars/                  pure path/regex builders for the vars/ layout (no I/O)
   nix/                   subprocess wrappers for nix build, nix eval, nixos-rebuild, nixos-anywhere
-  state/                 per-flake schema version (vars/.deploy.state) for migrate steps
   atomicfile/            atomic Write (replace) and Create (no-clobber) for all persistent files
   agekey/                age keypair generation
   sshkey/                SSH key operations and ssh-to-age conversion
@@ -43,9 +42,10 @@ The `git.tatikoma.dev/corpix/atlas` dependency provides `errors` (wrapping) and 
 
 `cmd.New()` builds the urfave/cli app. `Config` is populated in the app's `Before` hook from global flags and stored in `cli.App.Metadata["deploy.config"]`. Every action retrieves it via `getConfig(ctx)`.
 
-Top-level subcommands: `init`, `host`, `key`, `secret`, `group`, `migrate`, `sync`, `machine`, `kexec`.
+Top-level subcommands: `init`, `host`, `key`, `secret`, `group`, `sync`, `machine`, `kexec`.
 
-Provisioning (generating keys, creating files, changing recipients) happens only in `machine init`, `machine provision`, `key ...`, `group ...` and `sync`. Data commands (`secret set/mv/...`) and use commands (`machine build/eval/audit/deploy/unlock`) must not generate keys or re-key files. Use commands call `requireMachinesProvisioned`. Generated secrets go through `SetIfAbsent`, never `Set`.
+Provisioning (generating keys, creating files, changing recipients) happens only in `machine init`, `machine provision`, `key ...`, `group ...` and `sync`. Data commands (`secret set/mv/...`) and use commands (`machine build/eval/audit/deploy/unlock`) must not generate keys or re-key files. Build, eval, and audit do not require credentials. Deploy checks its declared
+credentials. Unlock checks only its boot requirements. Generated secrets go through `SetIfAbsent`, never `Set`.
 
 Name validation uses `requireSimpleName()` (pattern `^[a-z0-9][a-z0-9_-]*$`). Machine-in-flake validation calls `nix.EvalApply` to list `nixosConfigurations`. Group names and machine names are enforced to be disjoint by `requireGroupName()` in `cmd/group.go`.
 
@@ -61,7 +61,6 @@ vars/
     <machine>/initrd-ssh/id_ed25519.pub        # plaintext public key
     shared/<group>.yaml                 # per-group encrypted secrets (SOPS YAML)
   admin/                                # admin-only encrypted files
-  .deploy.state                         # JSON schema version for migrate
 ```
 
 All paths are constructed via `internal/vars`. Never hard-code them in `cmd/`.
@@ -93,7 +92,7 @@ groups:
   web: [alice, bob]
 ```
 
-Legacy flat format (`machine: addr` at top level) is still read and rewritten on next save. `GetAddress(path, machine, tag)` returns the tag-specific address or falls back to `Default`.
+`GetAddress(path, machine, tag)` returns the tag-specific address or falls back to `Default`.
 
 ## Atomic writes
 
@@ -154,3 +153,16 @@ Use plain ASCII punctuation in prose. Use straight quotes and apostrophes.
 Avoid smart quotes, curly apostrophes, em dashes, and en dashes.
 Format command invocations in documentation with backticks, such as `nix build`.
 Use fenced code blocks for multi-line examples.
+
+## Design and repository boundaries
+
+Keep deployment policy explicit. Do not add migrations, compatibility adapters,
+old-schema readers, implicit credential adoption, or module-specific inference.
+Machine provisioning manages declared infrastructure credentials only.
+Yggdrasil and PKI lifecycle commands are explicit operations.
+
+Change deploy only during this redesign. Infrastructure repositories will be
+migrated manually afterward. Never read, decrypt, or print their secret values
+into tool output. For a later authorized migration, pass values directly between
+processes or encrypted stores. Renaming and repositioning encrypted data is
+allowed. Test only with disposable generated credentials.
