@@ -116,7 +116,7 @@ betteralign, gofumpt, and patched goimports with `git.tatikoma.dev/` as the loca
 import prefix. Keep long configuration literals and callbacks on multiple lines.
 The formatters do not automatically wrap them. Format only deploy's own Go sources in `main.go`, `cmd/`, `internal/`, and
 `nix/`, leaving vendor and reactor-ca untouched. `just fmt` also formats tracked
-Nix files with nixfmt and VM Python scripts with Black.
+Nix files with nixfmt and test Python scripts with Black.
 Use the declared Go package name for imports. Add an import alias only to resolve
 a real name collision. Do not invent aliases based on the repository name.
 
@@ -128,8 +128,11 @@ prefixes, or positions in the command tree.
 
 ## Nix integration tests
 
-Register Nix checks in `tests/default.nix`. Use omnixiah's package set and
-`pkgs.omnixiah.runNixOSTest` for Linux VM tests. The omnixiah deploy input
+Register Nix checks by suite in `tests/default.nix`. Derive check names and
+selection from that registry. Do not duplicate test names in `justfile`.
+Run `just gen` after changing E2E registrations to update the CI matrix.
+Use omnixiah's package set and `pkgs.omnixiah.runNixOSTest` for Linux VM tests.
+The omnixiah deploy input
 follows the root flake. Keep deploy's overlay independently evaluable to avoid
 recursive package evaluation. Follow omnixiah's nixpkgs and flake-parts pins.
 
