@@ -148,3 +148,5 @@ Write plain prose with short sentences. Do not use semicolons in explanations.
 Describe commands and behavior without implementation history or comparisons to
 other repositories. Keep development and testing instructions to a brief
 paragraph and a command block.
+Use plain ASCII punctuation in prose. Use straight quotes and apostrophes.
+Avoid smart quotes, curly apostrophes, em dashes, and en dashes.
