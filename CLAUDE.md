@@ -139,3 +139,10 @@ Close stdin for unattended CLI calls in VM tests so SSH cannot consume the
 test driver protocol. Disable store GC pressure and scheduled maintenance in
 disposable guests, and force empty substituters when testing offline.
 Run `just lint` for changes to shell scripts; ShellCheck follows sourced helpers.
+
+## Documentation
+
+Write plain prose with short sentences. Do not use semicolons in explanations.
+Describe commands and behavior without implementation history or comparisons to
+other repositories. Keep development and testing instructions to a brief
+paragraph and a command block.
