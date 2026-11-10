@@ -21,11 +21,11 @@ The binary at `./deploy` in the repo root is a pre-built artifact, not tracked i
 ## Repository layout
 
 ```
-main.go                  entry point; calls cmd.New().Run()
+main.go                  entry point. Calls cmd.New().Run()
 cmd/                     all CLI command implementations (urfave/cli v2)
 internal/
   hosts/                 YAML registry: machine->address and group membership
-  sops/                  wrapper around getsops/sops; file.go = File (one decrypt, Get/Set/
+  sops/                  wrapper around getsops/sops. File.go = File (one decrypt, Get/Set/
                          SetIfAbsent/Delete/Rekey, one Save), sops.go = Create/Verify/Repair,
                          model.go = Model -> rules, MakePlan/Apply/Sync, rules.go = .sops.yaml I/O
   keypair/               Ensure for encrypted-private/plaintext-public key pairs (never regenerates)
@@ -41,11 +41,11 @@ The `git.tatikoma.dev/corpix/atlas` dependency provides `errors` (wrapping) and 
 
 ## CLI structure
 
-`cmd.New()` builds the urfave/cli app. `Config` is populated in the app's `Before` hook from global flags and stored in `cli.App.Metadata["deploy.config"]`; every action retrieves it via `getConfig(ctx)`.
+`cmd.New()` builds the urfave/cli app. `Config` is populated in the app's `Before` hook from global flags and stored in `cli.App.Metadata["deploy.config"]`. Every action retrieves it via `getConfig(ctx)`.
 
 Top-level subcommands: `init`, `host`, `key`, `secret`, `group`, `migrate`, `sync`, `machine`, `kexec`.
 
-Provisioning (generating keys, creating files, changing recipients) happens only in `machine init`, `machine provision`, `key ...`, `group ...` and `sync`. Data commands (`secret set/mv/...`) and use commands (`machine build/eval/audit/deploy/unlock`) must not generate keys or re-key files; use commands call `requireMachinesProvisioned`. Generated secrets go through `SetIfAbsent`, never `Set`.
+Provisioning (generating keys, creating files, changing recipients) happens only in `machine init`, `machine provision`, `key ...`, `group ...` and `sync`. Data commands (`secret set/mv/...`) and use commands (`machine build/eval/audit/deploy/unlock`) must not generate keys or re-key files. Use commands call `requireMachinesProvisioned`. Generated secrets go through `SetIfAbsent`, never `Set`.
 
 Name validation uses `requireSimpleName()` (pattern `^[a-z0-9][a-z0-9_-]*$`). Machine-in-flake validation calls `nix.EvalApply` to list `nixosConfigurations`. Group names and machine names are enforced to be disjoint by `requireGroupName()` in `cmd/group.go`.
 
@@ -64,7 +64,7 @@ vars/
   .deploy.state                         # JSON schema version for migrate
 ```
 
-All paths are constructed via `internal/vars`; never hard-code them in `cmd/`.
+All paths are constructed via `internal/vars`. Never hard-code them in `cmd/`.
 
 ## SOPS rules in .sops.yaml
 
@@ -76,7 +76,7 @@ All paths are constructed via `internal/vars`; never hard-code them in `cmd/`.
 - Vars rule: `vars/secrets/<machine>/.+$` -- covers host/initrd key files
 - Admin rule: `vars/admin/.+$` -- admin-only
 
-`MakePlan` compares the desired rules with `.sops.yaml` and with the recipients recorded in every encrypted file's metadata (no decryption), `Apply` writes the rules and re-keys only the files that differ, `Sync` does both. A re-key interrupted part-way is picked up by the next sync. In `cmd/`, change recipients only through `syncRecipients(cfg, edit)`; never edit rules piecemeal. Rules not matching the owned patterns are preserved before the generic fallbacks.
+`MakePlan` compares the desired rules with `.sops.yaml` and with the recipients recorded in every encrypted file's metadata (no decryption), `Apply` writes the rules and re-keys only the files that differ, `Sync` does both. A re-key interrupted part-way is picked up by the next sync. In `cmd/`, change recipients only through `syncRecipients(cfg, edit)`. Never edit rules piecemeal. Rules not matching the owned patterns are preserved before the generic fallbacks.
 
 ## Hosts file format
 
@@ -101,7 +101,7 @@ All persistent writes go through `internal/atomicfile`: `Write` replaces a file 
 
 ## multi-machine deploy
 
-`machineDeployCmd` validates and resolves all machines up front, then fans out goroutines gated by a semaphore channel of size `--parallel` (default 3). Errors are collected and joined; all machines are attempted even if some fail.
+`machineDeployCmd` validates and resolves all machines up front, then fans out goroutines gated by a semaphore channel of size `--parallel` (default 3). Errors are collected and joined. All machines are attempted even if some fail.
 
 ## Commits
 
@@ -113,8 +113,8 @@ Stage explicit paths and leave unrelated changes, including reactor-ca, alone.
 
 Run `nix develop` and `just fmt` before committing Go changes. The pipeline uses
 betteralign, gofumpt, and patched goimports with `git.tatikoma.dev/` as the local
-import prefix. Keep long configuration literals and callbacks on multiple lines;
-the formatters do not automatically wrap them. Format only deploy's own sources,
+import prefix. Keep long configuration literals and callbacks on multiple lines.
+The formatters do not automatically wrap them. Format only deploy's own sources,
 leaving vendor and reactor-ca untouched.
 Use the declared Go package name for imports. Add an import alias only to resolve
 a real name collision. Do not invent aliases based on the repository name.
@@ -129,12 +129,12 @@ prefixes, or positions in the command tree.
 
 Register Nix checks in `tests/default.nix`. Use omnixiah's package set and
 `pkgs.omnixiah.runNixOSTest` for Linux VM tests. The omnixiah deploy input
-follows the root flake; keep deploy's overlay independently evaluable to avoid
+follows the root flake. Keep deploy's overlay independently evaluable to avoid
 recursive package evaluation. Follow omnixiah's nixpkgs and flake-parts pins.
 
 Exercise the packaged CLI and real Nix, SOPS, SSH, and installer transports.
 Use disposable identities, virtual networks, and disks. Keep fast checks in
-`just test` and VM checks in `just test-e2e`; never target live infrastructure.
+`just test` and VM checks in `just test-e2e`. Never target live infrastructure.
 Close stdin for unattended CLI calls in VM tests so SSH cannot consume the
 test driver protocol. Disable store GC pressure and scheduled maintenance in
 disposable guests, and force empty substituters when testing offline.
