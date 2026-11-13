@@ -415,6 +415,12 @@ func New() *cli.App {
 				EnvVars: []string{"DEPLOY_NIX_MAX_JOBS"},
 			},
 			&cli.BoolFlag{
+				Name:    "verbose",
+				Aliases: []string{"V"},
+				Usage:   "show informational messages",
+				EnvVars: []string{"DEPLOY_VERBOSE"},
+			},
+			&cli.BoolFlag{
 				Name:    "debug",
 				Aliases: []string{"d"},
 				Usage:   "enable debug logging",
@@ -422,10 +428,12 @@ func New() *cli.App {
 			},
 		},
 		Before: func(ctx *cli.Context) error {
+			log.SetLevel(log.WarnLevel)
+			if ctx.Bool("verbose") {
+				log.SetLevel(log.InfoLevel)
+			}
 			if ctx.Bool("debug") {
 				log.SetLevel(log.DebugLevel)
-			} else {
-				log.SetLevel(log.InfoLevel)
 			}
 
 			nix.SetWriters(writerConfig{}.stdout(), writerConfig{}.stderr())
@@ -500,7 +508,7 @@ func New() *cli.App {
 				if strings.HasPrefix(msg, "exit status") {
 					os.Exit(1)
 				}
-				log.Error().Err(err).Msg("fatal")
+				log.Error().Err(err).Send()
 				os.Exit(1)
 			}
 		},

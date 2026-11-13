@@ -1,12 +1,27 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestGlobalLoggingFlagsDoNotConflictWithVersion(t *testing.T) {
+	for _, args := range [][]string{
+		{"deploy", "--help"},
+		{"deploy", "-V", "--help"},
+		{"deploy", "-v"},
+	} {
+		app := New()
+		app.Writer = &bytes.Buffer{}
+		if err := app.Run(args); err != nil {
+			t.Fatalf("run %v: %v", args, err)
+		}
+	}
+}
 
 func writeFlake(t *testing.T, dir, content string) {
 	t.Helper()

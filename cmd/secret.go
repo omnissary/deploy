@@ -615,7 +615,7 @@ func promptRepair(in io.Reader, out io.Writer) func(*sops.File) (bool, error) {
 }
 
 func listSecretFileKeys(path, label string) error {
-	log.Info().Str("file", path).Msg("listing secret keys")
+	log.Debug().Str("file", path).Msg("listing secret keys")
 	keys, err := sops.ListYAMLKeys(path)
 	if err != nil {
 		return err
