@@ -107,6 +107,8 @@ All persistent writes go through `internal/atomicfile`: `Write` replaces a file 
 Commit completed work with one commit per feature. Commit changes to these
 instructions separately. Do not add AI attribution or co-author trailers.
 Stage explicit paths and leave unrelated changes, including reactor-ca, alone.
+Use a `scope: description` commit subject, following recent commits. Choose a
+scope such as `deploy`, `pki`, `docs`, or `test` for the changed area.
 
 ## Go formatting and command policies
 
