@@ -23,7 +23,10 @@ with subtest("arrange the managed bootstrap host identity"):
     target.succeed("rm /etc/ssh/ssh_host_ed25519_key")
 
 with subtest("copy a real system closure and activate it over SSH"):
-    run_deploy("machine", "deploy", "target")
+    output = run_deploy("machine", "deploy", "target")
+    assert (
+        "deploy: starting deployment" not in output
+    ), "info log appeared without --verbose"
     target.wait_for_unit("sshd")
     assert target.succeed("cat /etc/deploy-test-generation").strip() == "updated"
     remote_public = target.succeed(
@@ -38,10 +41,11 @@ with subtest("copy a real system closure and activate it over SSH"):
     controller.fail("test -e /root/repo/vars/secrets/target/initrd-ssh/id_ed25519")
 
 with subtest("repeat deployment preserves identity and encrypted material"):
-    output = run_deploy("machine", "deploy", "target")
+    output = run_deploy("--verbose", "machine", "deploy", "target")
     assert (
-        "already matches" in output
+        "deploy: remote ssh host key already matches" in output
     ), "repeat deploy did not recognize the managed host key"
+    assert "INF" not in output, "structured log level leaked into CLI output"
     controller.succeed("cd /root/repo && sha256sum --check /root/before-provision")
     assert target.succeed("cat /etc/deploy-test-generation").strip() == "updated"
 

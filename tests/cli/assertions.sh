@@ -17,8 +17,13 @@ expect_failure 'explicit runtime requirements' 'missing required secret yggdrasi
 deploy key yggdrasil ensure node
 deploy key yggdrasil show --json node | jq -e '.address and .publicKey'
 rm "$TEST_REPO/vars/public/node/yggdrasil.json"
-printf fixture-cert | deploy secret set node tls-cert
-printf fixture-key | deploy secret set node tls-key
+printf fixture-cert | deploy secret set node tls-cert 2>default-log
+if grep -q '^deploy:' default-log; then
+  echo 'ASSERT FAIL: info log appeared without --verbose' >&2
+  exit 1
+fi
+printf fixture-key | command deploy --flake "$TEST_REPO" --verbose secret set node tls-key 2>verbose-log
+grep -Fx 'deploy: secret set (key=tls-key target=node)' verbose-log
 find "$TEST_REPO/vars" -type f -print0 | sort -z | xargs -0 sha256sum >before-read-only
 expect_failure 'deployment does not need public or CA inventory' 'no host registered' deploy machine deploy node
 sha256sum --check before-read-only
